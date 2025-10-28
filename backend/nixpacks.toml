@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ['nodejs_20', 'sqlite']
+
+[phases.install]
+cmds = ['npm ci']
+
+[phases.build]
+cmds = ['echo "Build complete"']
+
+[start]
+cmd = 'node server.js'
+

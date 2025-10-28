@@ -1,0 +1,4 @@
+* Don't use cringy gradients in any bg or smth
+* Use as less words in UI as possible. Dont write explanation of every heading 
+* Never use emojis in frontend
+* Write as simple code as possible i.e. Simple as less tokens as possible

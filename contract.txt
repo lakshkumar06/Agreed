@@ -1,0 +1,44 @@
+SERVICE AGREEMENT
+
+This Service Agreement (“Agreement”) is entered into on January 15, 2025, between:
+- AlphaTech Solutions Inc. (“Client”)
+- NovaBuild Software LLC (“Contractor”)
+
+1. SCOPE OF WORK
+The Contractor agrees to design and deploy a custom web dashboard for the Client’s internal analytics system.  
+Work shall commence within five (5) business days after the date of this Agreement.
+
+2. PAYMENT TERMS
+The total project cost is $120,000 (USD), divided into the following milestones:
+   - Milestone 1: $30,000 due upon completion of the wireframe prototype, expected within 15 days of project start.
+   - Milestone 2: $60,000 due upon delivery of the fully functional beta version, expected within 45 days of project start.
+   - Milestone 3: $30,000 due upon final acceptance and deployment, within 10 days of delivery.
+
+All payments shall be made via escrow and released upon Client approval of each milestone.
+
+3. CONFIDENTIALITY
+Both parties agree not to disclose or share any confidential information.  
+This obligation remains in effect for a period of two (2) years after contract termination.
+
+4. DELAYS AND PENALTIES
+If the Contractor fails to meet any delivery milestone by more than seven (7) days, a late penalty of 2% of the milestone value will apply per week of delay.  
+If delay exceeds 30 days, the Client may terminate the Agreement.
+
+5. TERMINATION
+Either party may terminate this Agreement by providing 15 days’ written notice.  
+Upon termination, all work completed shall be paid proportionally to the effort delivered.
+
+6. WARRANTIES
+The Contractor warrants that the deliverables will be free from material defects for a period of ninety (90) days after final acceptance.  
+Any defects reported during this period must be resolved within ten (10) business days.
+
+7. GOVERNING LAW
+This Agreement shall be governed by and construed in accordance with the laws of the State of California.
+
+IN WITNESS WHEREOF, the parties have executed this Agreement on the date first written above.
+
+___________________________  
+AlphaTech Solutions Inc.
+
+___________________________  
+NovaBuild Software LLC
