@@ -52,9 +52,36 @@ Return ONLY valid JSON array format, no markdown or extra text.`;
     const deadlineJsonMatch = deadlineText.match(/\[[\s\S]*\]/);
     const deadlines = deadlineJsonMatch ? JSON.parse(deadlineJsonMatch[0]) : [];
 
+    // Extract payment milestones
+    const milestonePrompt = `Extract all payment milestones from this contract. Look for:
+- Payment schedules and amounts
+- Deliverable-based payments
+- Milestone payments
+- Performance-based compensation
+- Payment deadlines
+
+Format as JSON array with:
+- description: What the payment is for (deliverable/milestone description)
+- estimated_amount: The payment amount in SOL or USD (as mentioned in contract, e.g., "5 SOL", "1000 USD", or "TBD" if not specified)
+- deadline: When payment is due (format: YYYY-MM-DD if available, otherwise description like "Upon completion of Phase 1")
+- suggested_recipient: The party receiving payment (extract from contract text, or "TBD" if unclear)
+
+Contract text:
+${fileContent}
+
+Return ONLY valid JSON array format, no markdown or extra text. If no payment milestones found, return empty array [].`;
+
+    const milestoneResult = await model.generateContent(milestonePrompt);
+    const milestoneResponse = milestoneResult.response;
+    const milestoneText = milestoneResponse.text();
+    
+    const milestoneJsonMatch = milestoneText.match(/\[[\s\S]*\]/);
+    const paymentMilestones = milestoneJsonMatch ? JSON.parse(milestoneJsonMatch[0]) : [];
+
     return {
       clauses,
-      deadlines
+      deadlines,
+      paymentMilestones
     };
   } catch (error) {
     console.error('Error processing contract with AI:', error);

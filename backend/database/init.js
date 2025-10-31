@@ -4,6 +4,10 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { migrateAITables } from './migrate_ai_tables.js';
 import { migrateOnchainProof } from './migrate_onchain_proof.js';
+import { migratePaymentMilestones } from './migrate_payment_milestones.js';
+import { migrateSolanaContractId } from './migrate_solana_contract_id.js';
+import { migrateIpfsVersions } from './migrate_ipfs_versions.js';
+import { migrateAddSolanaContractFields } from './migrate_add_solana_contract_fields.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -30,6 +34,10 @@ export function initDatabase() {
         console.log('Database initialized successfully');
         migrateAITables();
         migrateOnchainProof();
+        migratePaymentMilestones();
+        migrateSolanaContractId();
+        migrateAddSolanaContractFields();
+        migrateIpfsVersions();
         resolve();
       }
     });

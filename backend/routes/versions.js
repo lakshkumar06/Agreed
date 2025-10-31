@@ -2,7 +2,8 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
 import { authenticateToken } from './auth.js';
-import { generateContractHash, storeContractProofOnChain } from '../services/solanaService.js';
+import { generateContractHash, storeContractProofOnChain, updateContractIpfsOnChain, deriveContractPDA } from '../services/solanaService.js';
+import { uploadToIPFS, pinToIPFS, retrieveFromIPFS } from '../services/ipfsService.js';
 
 const router = express.Router();
 
@@ -34,46 +35,91 @@ function computeDiff(oldText, newText) {
   };
 }
 
-// Store contract proof on-chain and update database
-async function storeContractProof(versionId, contractContent, userWalletAddress) {
+// Store contract proof on-chain (content already on IPFS, just update on-chain)
+async function storeContractProof(versionId, contractId) {
+  console.log('[storeContractProof] START - versionId:', versionId, 'contractId:', contractId);
+  return new Promise((resolve, reject) => {
   try {
-    // Generate contract hash
-    const contractHash = generateContractHash(contractContent);
-    
-    // Get signer private key from environment (for demo purposes)
+      // Get version with IPFS hash
+      db.get(
+        'SELECT ipfs_hash FROM contract_versions WHERE id = ?',
+        [versionId],
+        async (err, version) => {
+          if (err || !version) {
+            console.error('[storeContractProof] Error fetching version:', err);
+            return resolve({ ipfsHash: null, txHash: null, error: 'Version not found' });
+          }
+
+          if (!version.ipfs_hash) {
+            console.warn('[storeContractProof] No IPFS hash for version, cannot update on-chain');
+            return resolve({ ipfsHash: null, txHash: null, error: 'No IPFS hash' });
+          }
+
+          // Get contract details to find Solana info
+          db.get(
+            `SELECT c.*, u.wallet_address as creator_wallet
+             FROM contracts c
+             JOIN users u ON c.created_by = u.id
+             WHERE c.id = ?`,
+            [contractId],
+            async (err, contract) => {
+              if (err || !contract) {
+                console.error('[storeContractProof] Error fetching contract:', err);
+                return resolve({ ipfsHash: null, txHash: null, error: 'Contract not found' });
+              }
+
+              console.log('[storeContractProof] Contract fetched - solana_contract_id:', contract.solana_contract_id, 'creator_wallet:', contract.creator_wallet);
+
+              try {
+                // Get signer private key from environment
     const signerPrivateKey = process.env.SOLANA_SIGNER_PRIVATE_KEY;
     
     if (!signerPrivateKey) {
-      console.warn('SOLANA_SIGNER_PRIVATE_KEY not set, skipping on-chain proof storage');
-      // Still store the hash in DB for future on-chain storage
-      db.run(
-        'UPDATE contract_versions SET contract_hash = ? WHERE id = ?',
-        [contractHash, versionId]
-      );
-      return { contractHash, txHash: null };
+                  console.warn('[storeContractProof] SOLANA_SIGNER_PRIVATE_KEY not set, skipping on-chain update');
+                  return resolve({ ipfsHash: version.ipfs_hash, txHash: null });
+                }
+
+                // Check if contract is initialized on Solana
+                if (!contract.solana_contract_id || !contract.creator_wallet) {
+                  console.warn('[storeContractProof] Contract not initialized on Solana, skipping on-chain update');
+                  return resolve({ ipfsHash: version.ipfs_hash, txHash: null, warning: 'Contract not on-chain' });
     }
     
-    // Store proof on Solana devnet (include user wallet address)
-    const txHash = await storeContractProofOnChain(contractHash, userWalletAddress, signerPrivateKey);
+                // Update IPFS hash on-chain
+                console.log('[storeContractProof] Updating IPFS hash on Solana...');
+                const result = await updateContractIpfsOnChain(
+                  contract.solana_contract_id,
+                  version.ipfs_hash,
+                  contract.creator_wallet,
+                  signerPrivateKey
+                );
+                console.log('[storeContractProof] On-chain update successful, signature:', result.signature);
     
-    // Update database with hash and transaction hash
+                // Update database with transaction hash
     db.run(
-      'UPDATE contract_versions SET contract_hash = ?, onchain_tx_hash = ? WHERE id = ?',
-      [contractHash, txHash, versionId]
+                  'UPDATE contract_versions SET onchain_tx_hash = ? WHERE id = ?',
+                  [result.signature, versionId],
+                  (err) => {
+                    if (err) console.error('[storeContractProof] Error updating DB with tx hash:', err);
+                    else console.log('[storeContractProof] Transaction hash stored in DB');
+                  }
     );
     
-    return { contractHash, txHash };
+                return resolve({ ipfsHash: version.ipfs_hash, txHash: result.signature });
     
   } catch (error) {
-    console.error('Error storing contract proof:', error);
-    // Still store the hash in DB even if on-chain storage fails
-    const contractHash = generateContractHash(contractContent);
-    db.run(
-      'UPDATE contract_versions SET contract_hash = ? WHERE id = ?',
-      [contractHash, versionId]
-    );
-    return { contractHash, txHash: null, error: error.message };
+                console.error('[storeContractProof] Error storing contract proof:', error);
+                return resolve({ ipfsHash: version.ipfs_hash, txHash: null, error: error.message });
+              }
+            }
+          );
+        }
+      );
+    } catch (error) {
+      console.error('[storeContractProof] Error in storeContractProof:', error);
+      return resolve({ ipfsHash: null, txHash: null, error: error.message });
   }
+  });
 }
 
 // Create new version
@@ -98,7 +144,7 @@ router.post('/contracts/:contractId/versions', authenticateToken, (req, res) => 
       db.get(
         'SELECT * FROM contract_versions WHERE contract_id = ? ORDER BY version_number DESC LIMIT 1',
         [contractId],
-        (err, latestVersion) => {
+        async (err, latestVersion) => {
           if (err) {
             return res.status(500).json({ error: 'Database error' });
           }
@@ -107,16 +153,33 @@ router.post('/contracts/:contractId/versions', authenticateToken, (req, res) => 
           const versionId = uuidv4();
           const parentVersionId = latestVersion ? latestVersion.id : null;
 
-          // Compute diff
-          const oldContent = latestVersion ? latestVersion.content : '';
+          // Upload content to IPFS immediately
+          try {
+            console.log('[CREATE_VERSION] Uploading new version content to IPFS...');
+            const ipfsHash = await uploadToIPFS(content);
+            console.log('[CREATE_VERSION] Content uploaded to IPFS:', ipfsHash);
+
+            // Pin the content to IPFS
+            await pinToIPFS(ipfsHash);
+
+            // Compute diff - retrieve old content from IPFS
+            let oldContent = '';
+            if (latestVersion && latestVersion.ipfs_hash) {
+              try {
+                oldContent = await retrieveFromIPFS(latestVersion.ipfs_hash);
+              } catch (e) {
+                console.error('[CREATE_VERSION] Failed to retrieve old content from IPFS:', e.message);
+                throw new Error('Cannot create version: IPFS retrieval failed');
+              }
+            }
           const diff = computeDiff(oldContent, content);
 
-          // Create version
+            // Create version with IPFS hash (NO content stored in DB)
           db.run(
             `INSERT INTO contract_versions 
-             (id, contract_id, version_number, parent_version_id, author_id, content, diff_summary, commit_message, merged, approval_status, approval_score)
+               (id, contract_id, version_number, parent_version_id, author_id, ipfs_hash, diff_summary, commit_message, merged, approval_status, approval_score)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [versionId, contractId, versionNumber, parentVersionId, req.user.userId, content, diff.summary, commit_message || '', 0, 'pending', 0],
+              [versionId, contractId, versionNumber, parentVersionId, req.user.userId, ipfsHash, diff.summary, commit_message || '', 0, 'pending', 0],
             function(err) {
               if (err) {
                 console.error('Error creating version:', err);
@@ -132,10 +195,10 @@ router.post('/contracts/:contractId/versions', authenticateToken, (req, res) => 
                 );
               }
 
-              // Update contract's current version and content
+                // Update contract's current version (NO content stored)
               db.run(
-                'UPDATE contracts SET current_version = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                [versionId, content, contractId]
+                  'UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                  [versionId, contractId]
               );
 
               // Add automatic approval from the author (all changes are auto-approved by their author)
@@ -145,29 +208,44 @@ router.post('/contracts/:contractId/versions', authenticateToken, (req, res) => 
                 [approvalId, versionId, req.user.userId, 'approve', 'Auto-approved by author'],
                 function(err) {
                   if (err) {
-                    console.error('Error creating auto-approval:', err);
+                      console.error('[CREATE_VERSION] Error creating auto-approval:', err);
                   }
 
                   // Update version status to approved
+                    console.log('[CREATE_VERSION] Auto-approving version', versionId);
                   db.run(
                     'UPDATE contract_versions SET approval_status = ?, approval_score = ? WHERE id = ?',
                     ['approved', 1, versionId]
                   );
 
-                  // Return created version
+                    // Return created version with content from IPFS
                   db.get(
                     `SELECT v.*, u.name as author_name
                      FROM contract_versions v
                      JOIN users u ON v.author_id = u.id
                      WHERE v.id = ?`,
                     [versionId],
-                    (err, version) => {
+                      async (err, version) => {
                       if (err) {
+                          console.error('[CREATE_VERSION] Error fetching created version:', err);
                         return res.status(500).json({ error: 'Database error' });
                       }
-                      // Add default values for approval fields
+                        console.log('[CREATE_VERSION] Version created with status:', version.approval_status);
+                        
+                        // Fetch content from IPFS
+                        let versionContent = content;
+                        try {
+                          versionContent = await retrieveFromIPFS(version.ipfs_hash);
+                        } catch (e) {
+                          console.error('[CREATE_VERSION] Failed to retrieve content from IPFS:', e.message);
+                          // Still return the version but log the error
+                          versionContent = content;
+                        }
+                        
+                        // Add default values and content
                       const versionWithDefaults = {
                         ...version,
+                          content: versionContent,
                         approval_status: version.approval_status || 'approved',
                         approval_score: version.approval_score || 1
                       };
@@ -178,8 +256,11 @@ router.post('/contracts/:contractId/versions', authenticateToken, (req, res) => 
               );
             }
           );
+          } catch (error) {
+            console.error('[CREATE_VERSION] Error uploading to IPFS:', error);
+            return res.status(500).json({ error: 'Failed to upload to IPFS' });
         }
-      );
+        });
     }
   );
 });
@@ -215,6 +296,57 @@ router.get('/contracts/:contractId/versions', authenticateToken, (req, res) => {
             approval_score: v.approval_score || 0
           }));
           res.json({ versions: versionsWithDefaults });
+        }
+      );
+    }
+  );
+});
+
+// Get IPFS content for a version
+router.get('/contracts/:contractId/versions/:versionId/ipfs', authenticateToken, async (req, res) => {
+  const { contractId, versionId } = req.params;
+
+  // Verify contract access
+  db.get(
+    'SELECT * FROM contracts WHERE id = ? AND (created_by = ? OR id IN (SELECT contract_id FROM contract_members WHERE user_id = ?))',
+    [contractId, req.user.userId, req.user.userId],
+    (err, contract) => {
+      if (err || !contract) {
+        return res.status(404).json({ error: 'Contract not found' });
+      }
+
+      // Get version with IPFS hash
+      db.get(
+        'SELECT ipfs_hash, content FROM contract_versions WHERE id = ? AND contract_id = ?',
+        [versionId, contractId],
+        async (err, version) => {
+          if (err || !version) {
+            return res.status(404).json({ error: 'Version not found' });
+          }
+
+          if (!version.ipfs_hash) {
+            return res.status(404).json({ 
+              error: 'No IPFS hash available for this version',
+              message: 'This version was not uploaded to IPFS'
+            });
+          }
+
+          // Retrieve from IPFS - FAIL if not available (true Web3)
+          try {
+            const ipfsContent = await retrieveFromIPFS(version.ipfs_hash);
+            res.json({ 
+              ipfs_hash: version.ipfs_hash,
+              content: ipfsContent,
+              source: 'ipfs'
+            });
+          } catch (error) {
+            console.error('[IPFS] Failed to retrieve from IPFS:', error.message);
+            return res.status(503).json({ 
+              error: 'IPFS content unavailable',
+              message: 'Failed to retrieve content from IPFS',
+              ipfs_hash: version.ipfs_hash
+            });
+          }
         }
       );
     }
@@ -317,7 +449,7 @@ router.get('/contracts/:contractId/history', authenticateToken, (req, res) => {
 
       db.all(
         `SELECT v.id, v.version_number, v.commit_message, v.diff_summary, v.created_at, v.merged, v.content, v.approval_status,
-         v.contract_hash, v.onchain_tx_hash,
+         v.contract_hash, v.onchain_tx_hash, v.ipfs_hash,
          u.name as author_name, u.email as author_email
          FROM contract_versions v
          JOIN users u ON v.author_id = u.id
@@ -435,6 +567,7 @@ router.post('/contracts/:contractId/versions/:versionId/approve', authenticateTo
 
                       // Auto-merge if all members approved (100%)
                       const shouldAutoMerge = approvalCount === totalMembers && approvalCount > 0;
+                      console.log('[APPROVE] Approval check - approvalCount:', approvalCount, 'totalMembers:', totalMembers, 'shouldAutoMerge:', shouldAutoMerge);
 
                       // Update version status
                       db.run(
@@ -447,22 +580,29 @@ router.post('/contracts/:contractId/versions/:versionId/approve', authenticateTo
 
                           // Auto-merge if 100% approval
                           if (shouldAutoMerge) {
+                            console.log('[APPROVE] Auto-merging version due to 100% approval');
                             db.get(
                               'SELECT v.content, v.author_id, u.wallet_address as author_wallet FROM contract_versions v JOIN users u ON v.author_id = u.id WHERE v.id = ?',
                               [versionId],
                               async (err, version) => {
                                 if (err) {
+                                  console.error('[APPROVE] Error fetching version:', err);
                                   return res.status(500).json({ error: 'Database error' });
                                 }
 
-                                // Update contract's current version and content
+                                console.log('[APPROVE] Version fetched, updating contract...');
+
+                                // Update contract's current version (NO content stored)
                                 db.run(
-                                  'UPDATE contracts SET current_version = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                                  [versionId, version.content, contractId],
+                                  'UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                                  [versionId, contractId],
                                   function(err) {
                                     if (err) {
+                                      console.error('[APPROVE] Error updating contract:', err);
                                       return res.status(500).json({ error: 'Failed to update contract' });
                                     }
+
+                                    console.log('[APPROVE] Contract updated, marking as merged...');
 
                                     // Mark version as merged
                                     db.run(
@@ -470,12 +610,14 @@ router.post('/contracts/:contractId/versions/:versionId/approve', authenticateTo
                                       ['merged', versionId],
                                       async function(err) {
                                         if (err) {
+                                          console.error('[APPROVE] Error marking as merged:', err);
                                           return res.status(500).json({ error: 'Failed to update version status' });
                                         }
 
-                                        // Store contract proof on-chain (include original author wallet address)
-                                        const authorWalletAddress = version.author_wallet || 'unknown';
-                                        const proofResult = await storeContractProof(versionId, version.content, authorWalletAddress);
+                                        console.log('[APPROVE] Calling storeContractProof...');
+                                        // Store contract proof on-chain using IPFS
+                                        const proofResult = await storeContractProof(versionId, contractId);
+                                        console.log('[APPROVE] storeContractProof result:', proofResult);
 
                                         res.json({
                                           approval: {
@@ -490,9 +632,10 @@ router.post('/contracts/:contractId/versions/:versionId/approve', authenticateTo
                                           status: 'merged',
                                           auto_merged: true,
                                           onchain_proof: {
-                                            contract_hash: proofResult.contractHash,
+                                            ipfs_hash: proofResult.ipfsHash,
                                             tx_hash: proofResult.txHash,
-                                            error: proofResult.error
+                                            error: proofResult.error,
+                                            warning: proofResult.warning
                                           }
                                         });
                                       }
@@ -502,6 +645,7 @@ router.post('/contracts/:contractId/versions/:versionId/approve', authenticateTo
                               }
                             );
                           } else {
+                            console.log('[APPROVE] Not auto-merging - returning approval response');
                             res.json({
                               approval: {
                                 id: approvalId,
@@ -605,10 +749,10 @@ router.post('/contracts/:contractId/versions/:versionId/merge', authenticateToke
             return res.status(400).json({ error: 'Version must be approved before merging' });
           }
 
-          // Update contract's current version and content
+          // Update contract's current version (NO content stored)
           db.run(
-            'UPDATE contracts SET current_version = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [versionId, version.content, contractId],
+            'UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [versionId, contractId],
             function(err) {
               if (err) {
                 return res.status(500).json({ error: 'Failed to update contract' });
@@ -623,16 +767,16 @@ router.post('/contracts/:contractId/versions/:versionId/merge', authenticateToke
                     return res.status(500).json({ error: 'Failed to update version status' });
                   }
 
-                  // Store contract proof on-chain (include original author wallet address)
-                  const authorWalletAddress = version.author_wallet || 'unknown';
-                  const proofResult = await storeContractProof(versionId, version.content, authorWalletAddress);
+                  // Store contract proof on-chain using IPFS
+                  const proofResult = await storeContractProof(versionId, contractId);
 
                   res.json({ 
                     message: 'Version merged successfully',
                     onchain_proof: {
-                      contract_hash: proofResult.contractHash,
+                      ipfs_hash: proofResult.ipfsHash,
                       tx_hash: proofResult.txHash,
-                      error: proofResult.error
+                      error: proofResult.error,
+                      warning: proofResult.warning
                     }
                   });
                 }

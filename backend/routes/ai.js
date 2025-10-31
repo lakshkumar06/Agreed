@@ -35,7 +35,7 @@ router.post('/contracts/:id/process', authenticateToken, async (req, res) => {
     );
 
     // Process with AI
-    const { clauses, deadlines } = await processContractFile(fileContent);
+    const { clauses, deadlines, paymentMilestones } = await processContractFile(fileContent);
 
     // Save clauses to database
     for (let i = 0; i < clauses.length; i++) {
@@ -56,10 +56,20 @@ router.post('/contracts/:id/process', authenticateToken, async (req, res) => {
       );
     }
 
+    // Save payment milestone suggestions to database
+    for (const milestone of paymentMilestones) {
+      const milestoneId = uuidv4();
+      db.run(
+        'INSERT INTO payment_milestone_suggestions (id, contract_id, description, estimated_amount, deadline, suggested_recipient) VALUES (?, ?, ?, ?, ?, ?)',
+        [milestoneId, id, milestone.description, milestone.estimated_amount || 'TBD', milestone.deadline || 'TBD', milestone.suggested_recipient || 'TBD']
+      );
+    }
+
     res.json({ 
       success: true,
       clauses: clauses.length,
-      deadlines: deadlines.length 
+      deadlines: deadlines.length,
+      paymentMilestones: paymentMilestones.length
     });
   } catch (error) {
     console.error('Error processing contract:', error);
@@ -145,6 +155,61 @@ router.post('/contracts/:id/chat', authenticateToken, async (req, res) => {
     console.error('Error in chat:', error);
     res.status(500).json({ error: 'Failed to process chat' });
   }
+});
+
+// Get payment milestone suggestions
+router.get('/contracts/:id/milestone-suggestions', authenticateToken, (req, res) => {
+  const { id } = req.params;
+
+  db.all(
+    'SELECT * FROM payment_milestone_suggestions WHERE contract_id = ? ORDER BY created_at ASC',
+    [id],
+    (err, milestones) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      res.json({ milestones });
+    }
+  );
+});
+
+// Update milestone suggestion (e.g., after syncing to chain)
+router.put('/milestone-suggestions/:id', authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const { synced_to_chain, escrow_pda, milestone_id } = req.body;
+
+  db.run(
+    'UPDATE payment_milestone_suggestions SET synced_to_chain = ?, escrow_pda = ?, milestone_id = ? WHERE id = ?',
+    [synced_to_chain ? 1 : 0, escrow_pda || null, milestone_id || null, id],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Milestone suggestion not found' });
+      }
+      res.json({ success: true });
+    }
+  );
+});
+
+// Delete milestone suggestion
+router.delete('/milestone-suggestions/:id', authenticateToken, (req, res) => {
+  const { id } = req.params;
+
+  db.run(
+    'DELETE FROM payment_milestone_suggestions WHERE id = ?',
+    [id],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Milestone suggestion not found' });
+      }
+      res.json({ success: true });
+    }
+  );
 });
 
 // Get chat history

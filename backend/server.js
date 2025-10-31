@@ -11,6 +11,7 @@ import contractRoutes from './routes/contracts.js';
 import dashboardRoutes from './routes/dashboard.js';
 import versionRoutes from './routes/versions.js';
 import aiRoutes from './routes/ai.js';
+import ipfsRoutes from './routes/ipfs.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -29,6 +30,7 @@ app.use('/api/contracts', contractRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', versionRoutes);
 app.use('/api', aiRoutes);
+app.use('/api', ipfsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

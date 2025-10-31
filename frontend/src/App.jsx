@@ -164,8 +164,10 @@ function App() {
 
   const createContract = async (title, description, fileContent) => {
     try {
+      // First create contract in database
       const res = await axios.post(`${API_BASE}/contracts`, { title, description })
-      const contractId = res.data.contract.id
+      const contract = res.data.contract
+      const contractId = contract.id
       
       // Process file with AI if provided
       if (fileContent) {
@@ -174,6 +176,7 @@ function App() {
       
       await loadDashboard()
     } catch (error) {
+      console.error('Failed to create contract:', error);
       alert('Failed to create contract')
     }
   }

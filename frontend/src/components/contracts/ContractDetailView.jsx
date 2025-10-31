@@ -5,11 +5,12 @@ import { MembersView } from './MembersView'
 import { ApprovalRequestsView } from './ApprovalRequestsView'
 import { VersionHistoryView } from './VersionHistoryView'
 import { DeadlinesView } from './DeadlinesView'
+import { MilestonesView } from './MilestonesView'
 import { InviteMemberForm } from './InviteMemberForm'
 
 export function ContractDetailView({ contract, members, invitations, currentUserId, versions, history, selectedVersion, onBack, onInvite, onResend, onRefresh, onCreateVersion, onSelectVersion, onCompareVersions }) {
   const [showInviteForm, setShowInviteForm] = useState(false)
-  const [sidebarMode, setSidebarMode] = useState('home') // 'home', 'members', 'approvalRequests', 'versionHistory', 'deadlines'
+  const [sidebarMode, setSidebarMode] = useState('home') // 'home', 'members', 'approvalRequests', 'versionHistory', 'deadlines', 'milestones'
   const [contentMode, setContentMode] = useState('editor') // 'editor', 'commit'
   const [contractViewMode, setContractViewMode] = useState('raw') // 'raw', 'clauses', 'chat'
   
@@ -122,6 +123,16 @@ export function ContractDetailView({ contract, members, invitations, currentUser
               >
                 Deadlines
               </button>
+              <button
+                onClick={() => { setSidebarMode('milestones'); setContentMode('editor') }}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  sidebarMode === 'milestones'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Milestones
+              </button>
             </nav>
           </div>
         </div>
@@ -175,6 +186,13 @@ export function ContractDetailView({ contract, members, invitations, currentUser
               />
             ) : sidebarMode === 'deadlines' ? (
               <DeadlinesView contractId={contract.id} />
+            ) : sidebarMode === 'milestones' ? (
+              <MilestonesView 
+                contractId={contract.id}
+                contract={contract}
+                currentUser={{ id: currentUserId }}
+                isCreator={isCreator}
+              />
             ) : (
               <VersionHistoryView
                 contractId={contract.id}
