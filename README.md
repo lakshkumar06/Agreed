@@ -1,6 +1,6 @@
 ![Agreed Logo](images/Logo.png)
 
-# Agreed - Git for Legal Agreements
+# Making Contracts Truly Smart
 
 Agreed is a collaborative contract management platform that brings version control to legal agreements, powered by Solana blockchain for trustless coordination and cryptographic proof.
 
