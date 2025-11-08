@@ -21,7 +21,7 @@ import './App.css'
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
 
 function App() {
-  const { publicKey, connected, disconnect } = useWallet()
+  const { publicKey, connected, disconnect, signMessage } = useWallet()
   const [user, setUser] = useState(null)
   const [contracts, setContracts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -60,6 +60,7 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (loading) return
     if (connected && publicKey && user && !user.wallet_address) {
       // User is logged in but doesn't have wallet connected, update it
       updateUserWallet()
@@ -68,22 +69,27 @@ function App() {
       // User not logged in, try wallet auth
       handleWalletAuth()
     }
-  }, [connected, publicKey, user])
+  }, [connected, publicKey, user, loading])
+
+  const walletProof = async () => {
+    if (!signMessage) throw new Error('Wallet does not support message signing')
+    const wallet_address = publicKey.toBase58()
+    const { data } = await axios.post(`${API_BASE}/auth/wallet/challenge`, { wallet_address })
+    const bytes = await signMessage(new TextEncoder().encode(data.message))
+    const signature = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
+    return { wallet_address, message: data.message, signature }
+  }
 
   const handleWalletAuth = async () => {
     try {
-      const walletAddress = publicKey.toString()
-      const res = await axios.post(`${API_BASE}/auth/login`, { 
-        wallet_address: walletAddress 
-      })
+      const res = await axios.post(`${API_BASE}/auth/wallet/login`, await walletProof())
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
       setUser(res.data.user)
       await loadDashboard()
     } catch (error) {
       console.error('Wallet auth failed:', error)
-      // If wallet doesn't exist, show registration form
-      setShowWalletRegister(true)
+      if (error.response?.status === 404) setShowWalletRegister(true)
     }
   }
 
@@ -135,16 +141,11 @@ function App() {
 
   const handleWalletRegister = async (name, email, password) => {
     try {
-      const walletAddress = publicKey.toString()
-      const res = await axios.post(`${API_BASE}/auth/register`, { 
-        name, 
-        email, 
-        password,
-        wallet_address: walletAddress 
-      })
+      const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password })
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
-      setUser(res.data.user)
+      await axios.patch(`${API_BASE}/auth/wallet`, await walletProof())
+      setUser({ ...res.data.user, wallet_address: publicKey.toBase58() })
       setShowWalletRegister(false)
       await loadDashboard()
     } catch (error) {
@@ -154,8 +155,7 @@ function App() {
 
   const updateUserWallet = async () => {
     try {
-      const walletAddress = publicKey.toString()
-      await axios.patch(`${API_BASE}/auth/wallet`, { wallet_address: walletAddress })
+      await axios.patch(`${API_BASE}/auth/wallet`, await walletProof())
       await loadDashboard()
     } catch (error) {
       console.error('Failed to update wallet:', error)

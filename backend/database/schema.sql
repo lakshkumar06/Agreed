@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS wallet_challenges (
+  hash TEXT PRIMARY KEY,
+  wallet_address TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
 -- Contract invitations table
 CREATE TABLE IF NOT EXISTS contract_invitations (
   id TEXT PRIMARY KEY,

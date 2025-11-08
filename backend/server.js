@@ -1,10 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
-import { v4 as uuidv4 } from 'uuid';
 import { initDatabase, db } from './database/init.js';
+import { requireJwtSecret } from './config.js';
 import authRoutes from './routes/auth.js';
 import orgRoutes from './routes/organizations.js';
 import contractRoutes from './routes/contracts.js';
@@ -15,10 +13,11 @@ import ipfsRoutes from './routes/ipfs.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+requireJwtSecret();
 
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',').map(origin => origin.trim());
+app.use(cors({ origin: allowedOrigins }));
+app.use(express.json({ limit: '10mb' }));
 
 // Initialize database
 await initDatabase();
@@ -40,5 +39,3 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-export { JWT_SECRET };

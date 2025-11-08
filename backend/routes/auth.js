@@ -3,7 +3,8 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
-import { JWT_SECRET } from '../server.js';
+import { requireJwtSecret } from '../config.js';
+import { createChallenge, hashChallenge, verifyWalletSignature } from '../services/walletProof.js';
 
 const router = express.Router();
 
@@ -12,12 +13,12 @@ router.post('/register', async (req, res) => {
   try {
     const { name, email, password, wallet_address, role_title } = req.body;
     
-    if (!name || (!email && !wallet_address)) {
-      return res.status(400).json({ error: 'Name and either email or wallet address required' });
+    if (!name || !email || !password || password.length < 8 || wallet_address) {
+      return res.status(400).json({ error: 'Name, email and a password of at least 8 characters required; link wallets after registration' });
     }
 
     const userId = uuidv4();
-    const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     db.run(
       `INSERT INTO users (id, name, email, password, wallet_address, role_title) 
@@ -31,7 +32,7 @@ router.post('/register', async (req, res) => {
           return res.status(500).json({ error: 'Failed to create user' });
         }
 
-        const token = jwt.sign({ userId, email, wallet_address }, JWT_SECRET, { expiresIn: '7d' });
+        const token = jwt.sign({ userId, email }, requireJwtSecret(), { expiresIn: '7d' });
         
         // Create session
         const sessionId = uuidv4();
@@ -58,16 +59,11 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, wallet_address } = req.body;
 
-    if (!email && !wallet_address) {
-      return res.status(400).json({ error: 'Email or wallet address required' });
+    if (!email || !password || wallet_address) {
+      return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const query = email 
-      ? 'SELECT * FROM users WHERE email = ?'
-      : 'SELECT * FROM users WHERE wallet_address = ?';
-    const param = email || wallet_address;
-
-    db.get(query, [param], async (err, user) => {
+    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
       }
@@ -76,38 +72,15 @@ router.post('/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      // For wallet login, skip password check
-      if (wallet_address) {
-        const token = jwt.sign({ userId: user.id, email: user.email, wallet_address: user.wallet_address }, JWT_SECRET, { expiresIn: '7d' });
-        
-        // Update last login
-        db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
-        
-        res.json({ 
-          token, 
-          user: { id: user.id, name: user.name, email: user.email, wallet_address: user.wallet_address, role_title: user.role_title } 
-        });
-        return;
-      }
-
-      // Email/password login
-      if (!password) {
-        return res.status(400).json({ error: 'Password required for email login' });
-      }
-
-      // If user doesn't have a password (wallet-only registration), create one
       if (!user.password) {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        db.run('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, user.id]);
-        // Continue with login after setting password
-      } else {
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) {
-          return res.status(401).json({ error: 'Invalid credentials' });
-        }
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id, email: user.email }, requireJwtSecret(), { expiresIn: '7d' });
       
       // Update last login
       db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
@@ -131,7 +104,7 @@ export const authenticateToken = (req, res, next) => {
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, requireJwtSecret(), (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid token' });
     }
@@ -154,23 +127,48 @@ router.get('/me', authenticateToken, (req, res) => {
 });
 
 // Update user wallet address
-router.patch('/wallet', authenticateToken, (req, res) => {
+router.post('/wallet/challenge', (req, res) => {
   const { wallet_address } = req.body;
-  
-  if (!wallet_address) {
-    return res.status(400).json({ error: 'Wallet address required' });
+  if (typeof wallet_address !== 'string' || wallet_address.length < 32 || wallet_address.length > 44) {
+    return res.status(400).json({ error: 'Valid wallet address required' });
   }
+  const challenge = createChallenge(wallet_address);
+  db.run('INSERT INTO wallet_challenges (hash, wallet_address, expires_at) VALUES (?, ?, ?)',
+    [challenge.hash, wallet_address, challenge.expiresAt], (err) => {
+      if (err) return res.status(500).json({ error: 'Failed to create challenge' });
+      res.json({ message: challenge.message });
+    });
+});
 
-  db.run(
-    'UPDATE users SET wallet_address = ? WHERE id = ?',
-    [wallet_address, req.user.userId],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Failed to update wallet address' });
-      }
-      res.json({ message: 'Wallet address updated successfully' });
-    }
-  );
+function consumeWalletProof(req, res, next) {
+  const { wallet_address, message, signature } = req.body;
+  if (typeof wallet_address !== 'string' || typeof message !== 'string' || typeof signature !== 'string' ||
+      message.length > 300 || !verifyWalletSignature(wallet_address, message, signature)) {
+    return res.status(401).json({ error: 'Invalid wallet proof' });
+  }
+  db.run('DELETE FROM wallet_challenges WHERE hash = ? AND wallet_address = ? AND expires_at > ?',
+    [hashChallenge(message), wallet_address, new Date().toISOString()], function(err) {
+      if (err) return res.status(500).json({ error: 'Database error' });
+      if (this.changes !== 1) return res.status(401).json({ error: 'Wallet challenge expired or already used' });
+      next();
+    });
+}
+
+router.post('/wallet/login', consumeWalletProof, (req, res) => {
+  db.get('SELECT * FROM users WHERE wallet_address = ?', [req.body.wallet_address], (err, user) => {
+    if (err) return res.status(500).json({ error: 'Database error' });
+    if (!user) return res.status(404).json({ error: 'Wallet is not linked to an account' });
+    const token = jwt.sign({ userId: user.id, email: user.email }, requireJwtSecret(), { expiresIn: '7d' });
+    db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, wallet_address: user.wallet_address, role_title: user.role_title } });
+  });
+});
+
+router.patch('/wallet', authenticateToken, consumeWalletProof, (req, res) => {
+  db.run('UPDATE users SET wallet_address = ? WHERE id = ?', [req.body.wallet_address, req.user.userId], function(err) {
+    if (err) return res.status(err.message.includes('UNIQUE') ? 409 : 500).json({ error: 'Failed to link wallet' });
+    res.json({ message: 'Wallet linked successfully' });
+  });
 });
 
 export default router;
