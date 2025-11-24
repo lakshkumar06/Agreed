@@ -5,6 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "start": "node server.js",
     "dev": "nodemon server.js",
     "restart": "pkill -f 'node server.js' && sleep 1 && node server.js",

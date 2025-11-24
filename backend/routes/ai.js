@@ -2,9 +2,12 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
 import { authenticateToken } from './auth.js';
+import { requireContractAccess, requireMilestoneAccess } from './contractAccess.js';
 import { processContractFile, chatWithContract } from '../services/aiService.js';
 
 const router = express.Router();
+router.use('/contracts/:id', authenticateToken, requireContractAccess);
+router.use('/milestone-suggestions/:id', authenticateToken, requireMilestoneAccess);
 
 // Process contract file with AI
 router.post('/contracts/:id/process', authenticateToken, async (req, res) => {
@@ -235,4 +238,3 @@ router.get('/contracts/:id/chat', authenticateToken, (req, res) => {
 });
 
 export default router;
-

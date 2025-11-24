@@ -12,7 +12,7 @@ import { migrateAddSolanaContractFields } from './migrate_add_solana_contract_fi
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const dbPath = join(__dirname, 'clausebase.db');
+const dbPath = process.env.DB_PATH || join(__dirname, 'clausebase.db');
 
 export const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {

@@ -2,6 +2,7 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
 import { authenticateToken } from './auth.js';
+import { requireContractAccess } from './contractAccess.js';
 import { sendInvitationEmailDev } from '../services/emailService.js';
 import { uploadToIPFS, pinToIPFS } from '../services/ipfsService.js';
 import { initializeContractOnChain, deriveContractPDA } from '../services/solanaService.js';
@@ -144,7 +145,7 @@ router.get('/:id', authenticateToken, (req, res) => {
 });
 
 // Get contract members
-router.get('/:id/members', authenticateToken, (req, res) => {
+router.get('/:id/members', authenticateToken, requireContractAccess, (req, res) => {
   const { id } = req.params;
   
   db.all(
@@ -171,22 +172,21 @@ router.post('/:id/members', authenticateToken, (req, res) => {
     return res.status(400).json({ error: 'User ID and role required' });
   }
 
-  // Verify contract exists and user has access
+  // Only the creator can add members to this contract.
   db.get(
-    'SELECT * FROM contracts WHERE id = ? AND org_id = (SELECT org_id FROM users WHERE id = ?)',
+    'SELECT * FROM contracts WHERE id = ? AND created_by = ?',
     [id, req.user.userId],
     (err, contract) => {
       if (err || !contract) {
         return res.status(404).json({ error: 'Contract not found' });
       }
 
-      // Check if user is in same org
       db.get(
-        'SELECT * FROM users WHERE id = ? AND org_id = ?',
-        [user_id, contract.org_id],
+        'SELECT * FROM users WHERE id = ?',
+        [user_id],
         (err, user) => {
           if (err || !user) {
-            return res.status(400).json({ error: 'User not in organization' });
+            return res.status(400).json({ error: 'User not found' });
           }
 
           const memberId = uuidv4();
@@ -224,7 +224,7 @@ router.patch('/:id/status', authenticateToken, (req, res) => {
   }
 
   db.run(
-    'UPDATE contracts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND org_id = (SELECT org_id FROM users WHERE id = ?)',
+    'UPDATE contracts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND created_by = ?',
     [status, id, req.user.userId],
     function(err) {
       if (err) {
