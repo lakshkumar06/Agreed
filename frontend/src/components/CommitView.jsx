@@ -3,7 +3,7 @@ import axios from 'axios';
 import { ApprovalProgressBar } from './ApprovalProgressBar';
 import { CommentThread } from './CommentThread';
 
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
 export function CommitView({ contractId, version, currentUserId, onRefresh, isCreator = false, totalMembers = 0, onBack }) {
   const [approvals, setApprovals] = useState([]);

@@ -4,7 +4,7 @@ import { ContractEditor } from '../ContractEditor'
 import { ClausesView } from './ClausesView'
 import { ChatbotView } from './ChatbotView'
 
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
 
 export function ContractView({ contractId, contract, contractViewMode, setContractViewMode, onCreateVersion, currentUserId, versions, history }) {
   const [displayContent, setDisplayContent] = useState('')

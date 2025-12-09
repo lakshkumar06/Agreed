@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Connection, PublicKey } from "@solana/web3.js";
-import idl from "../../../agreed_contracts/target/idl/agreed_contracts.json";
+import idl from "../../../agreed_contracts/idl/agreed_contracts.json";
 
 const PROGRAM_ID = new PublicKey("2Ye3UPoTi9t7j1vHq6VsqivGxQWgd6ofga5DgLRkJrFb");
 const connection = new Connection("https://api.devnet.solana.com", "confirmed");

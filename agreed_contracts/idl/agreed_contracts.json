@@ -1,0 +1,1187 @@
+{
+  "address": "2Ye3UPoTi9t7j1vHq6VsqivGxQWgd6ofga5DgLRkJrFb",
+  "metadata": {
+    "name": "agreed_contracts",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "approve_contract",
+      "discriminator": [
+        192,
+        66,
+        239,
+        212,
+        135,
+        180,
+        179,
+        219
+      ],
+      "accounts": [
+        {
+          "name": "contract",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "approver_reputation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "approver"
+              }
+            ]
+          }
+        },
+        {
+          "name": "approver",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "approve_milestone_release",
+      "discriminator": [
+        14,
+        62,
+        208,
+        176,
+        4,
+        165,
+        123,
+        61
+      ],
+      "accounts": [
+        {
+          "name": "escrow_milestone",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.contract_id",
+                "account": "EscrowMilestone"
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.milestone_id",
+                "account": "EscrowMilestone"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contract",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "approver_reputation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "approver"
+              }
+            ]
+          }
+        },
+        {
+          "name": "approver",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancel_contract",
+      "discriminator": [
+        3,
+        168,
+        37,
+        73,
+        140,
+        194,
+        156,
+        165
+      ],
+      "accounts": [
+        {
+          "name": "contract",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "cancel_escrow_milestone",
+      "discriminator": [
+        109,
+        244,
+        32,
+        198,
+        92,
+        4,
+        64,
+        56
+      ],
+      "accounts": [
+        {
+          "name": "escrow_milestone",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.contract_id",
+                "account": "EscrowMilestone"
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.milestone_id",
+                "account": "EscrowMilestone"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_contract",
+      "discriminator": [
+        181,
+        192,
+        35,
+        141,
+        212,
+        113,
+        138,
+        94
+      ],
+      "accounts": [
+        {
+          "name": "contract",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "contract_id"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_reputation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "contract_id",
+          "type": "u64"
+        },
+        {
+          "name": "participants",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "required_approvals",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "initialize_escrow_milestone",
+      "discriminator": [
+        115,
+        145,
+        230,
+        124,
+        22,
+        96,
+        91,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "escrow_milestone",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "contract_id"
+              },
+              {
+                "kind": "arg",
+                "path": "milestone_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contract",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_reputation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "milestone_id",
+          "type": "u64"
+        },
+        {
+          "name": "contract_id",
+          "type": "u64"
+        },
+        {
+          "name": "description",
+          "type": "string"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "deadline",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_reputation",
+      "discriminator": [
+        150,
+        240,
+        109,
+        53,
+        147,
+        42,
+        152,
+        162
+      ],
+      "accounts": [
+        {
+          "name": "reputation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "mark_contract_complete",
+      "discriminator": [
+        233,
+        182,
+        68,
+        65,
+        186,
+        40,
+        35,
+        74
+      ],
+      "accounts": [
+        {
+          "name": "contract",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "participant_reputation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  112,
+                  117,
+                  116,
+                  97,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "participant"
+              }
+            ]
+          }
+        },
+        {
+          "name": "participant"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "mark_milestone_complete",
+      "discriminator": [
+        114,
+        143,
+        187,
+        142,
+        122,
+        215,
+        204,
+        180
+      ],
+      "accounts": [
+        {
+          "name": "escrow_milestone",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.contract_id",
+                "account": "EscrowMilestone"
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.milestone_id",
+                "account": "EscrowMilestone"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contract",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "marker",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "release_escrow_funds",
+      "discriminator": [
+        30,
+        216,
+        62,
+        223,
+        121,
+        170,
+        140,
+        45
+      ],
+      "accounts": [
+        {
+          "name": "escrow_milestone",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.contract_id",
+                "account": "EscrowMilestone"
+              },
+              {
+                "kind": "account",
+                "path": "escrow_milestone.milestone_id",
+                "account": "EscrowMilestone"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recipient",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_contract_ipfs",
+      "discriminator": [
+        99,
+        0,
+        10,
+        219,
+        97,
+        52,
+        128,
+        195
+      ],
+      "accounts": [
+        {
+          "name": "contract",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  97,
+                  99,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract.contract_id",
+                "account": "Contract"
+              },
+              {
+                "kind": "account",
+                "path": "contract.creator",
+                "account": "Contract"
+              }
+            ]
+          }
+        },
+        {
+          "name": "updater",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "ipfs_hash",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Contract",
+      "discriminator": [
+        172,
+        138,
+        115,
+        242,
+        121,
+        67,
+        183,
+        26
+      ]
+    },
+    {
+      "name": "EscrowMilestone",
+      "discriminator": [
+        138,
+        98,
+        19,
+        45,
+        146,
+        11,
+        155,
+        225
+      ]
+    },
+    {
+      "name": "UserReputation",
+      "discriminator": [
+        86,
+        95,
+        94,
+        218,
+        215,
+        219,
+        207,
+        37
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "TooManyParticipants",
+      "msg": "Too many participants (max 10)"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidApprovalThreshold",
+      "msg": "Invalid approval threshold"
+    },
+    {
+      "code": 6002,
+      "name": "CreatorMustBeParticipant",
+      "msg": "Creator must be a participant"
+    },
+    {
+      "code": 6003,
+      "name": "ContractNotActive",
+      "msg": "Contract is not active"
+    },
+    {
+      "code": 6004,
+      "name": "NotAParticipant",
+      "msg": "You are not a participant"
+    },
+    {
+      "code": 6005,
+      "name": "AlreadyApproved",
+      "msg": "You have already approved this contract"
+    },
+    {
+      "code": 6006,
+      "name": "OnlyCreatorCanCancel",
+      "msg": "Only creator can cancel the contract"
+    },
+    {
+      "code": 6007,
+      "name": "ContractNotCompleted",
+      "msg": "Contract is not completed yet"
+    },
+    {
+      "code": 6008,
+      "name": "ReputationAlreadyExists",
+      "msg": "Reputation account already exists"
+    },
+    {
+      "code": 6009,
+      "name": "DescriptionTooLong",
+      "msg": "Description too long (max 200 characters)"
+    },
+    {
+      "code": 6010,
+      "name": "OnlyCreatorCanInitializeEscrow",
+      "msg": "Only creator can initialize escrow"
+    },
+    {
+      "code": 6011,
+      "name": "RecipientNotParticipant",
+      "msg": "Recipient must be a participant"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidAmount",
+      "msg": "Invalid amount"
+    },
+    {
+      "code": 6013,
+      "name": "MilestoneNotFunded",
+      "msg": "Milestone is not funded"
+    },
+    {
+      "code": 6014,
+      "name": "MilestoneNotMarkedComplete",
+      "msg": "Milestone not marked complete"
+    },
+    {
+      "code": 6015,
+      "name": "AlreadyApprovedMilestone",
+      "msg": "Already approved this milestone"
+    },
+    {
+      "code": 6016,
+      "name": "InsufficientApprovals",
+      "msg": "Insufficient approvals to release funds"
+    },
+    {
+      "code": 6017,
+      "name": "OnlyCreatorCanCancelEscrow",
+      "msg": "Only creator can cancel escrow"
+    },
+    {
+      "code": 6018,
+      "name": "CannotCancelMilestone",
+      "msg": "Cannot cancel milestone in current status"
+    },
+    {
+      "code": 6019,
+      "name": "IpfsHashTooLong",
+      "msg": "IPFS hash too long (max 46 characters)"
+    }
+  ],
+  "types": [
+    {
+      "name": "Contract",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "contract_id",
+            "type": "u64"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "participants",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "ContractStatus"
+              }
+            }
+          },
+          {
+            "name": "required_approvals",
+            "type": "u8"
+          },
+          {
+            "name": "current_approvals",
+            "type": "u8"
+          },
+          {
+            "name": "approvers",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "ipfs_hash",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ContractStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Completed"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowMilestone",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "milestone_id",
+            "type": "u64"
+          },
+          {
+            "name": "contract_id",
+            "type": "u64"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "deadline",
+            "type": "i64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "MilestoneStatus"
+              }
+            }
+          },
+          {
+            "name": "approvals_required",
+            "type": "u8"
+          },
+          {
+            "name": "approvals",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "marked_complete_by",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MilestoneStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Pending"
+          },
+          {
+            "name": "Funded"
+          },
+          {
+            "name": "MarkedComplete"
+          },
+          {
+            "name": "Released"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UserReputation",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "contracts_created",
+            "type": "u32"
+          },
+          {
+            "name": "contracts_completed",
+            "type": "u32"
+          },
+          {
+            "name": "contracts_approved",
+            "type": "u32"
+          },
+          {
+            "name": "total_value_escrowed",
+            "type": "u64"
+          },
+          {
+            "name": "first_activity",
+            "type": "i64"
+          },
+          {
+            "name": "last_activity",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -8,7 +8,9 @@ import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const idl = JSON.parse(readFileSync(join(__dirname, '../../agreed_contracts/target/idl/agreed_contracts.json'), 'utf8'));
+function loadIdl() {
+  return JSON.parse(readFileSync(join(__dirname, '../../agreed_contracts/idl/agreed_contracts.json'), 'utf8'));
+}
 
 const SOLANA_RPC_URL = 'https://api.devnet.solana.com';
 const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgd6ofga5DgLRkJrFb';
@@ -148,7 +150,7 @@ export async function initializeContractOnChain(contractId, ipfsHash, participan
     // Create wallet and provider
     const wallet = new Wallet(signer);
     const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' });
-    const program = new Program(idl, provider);
+    const program = new Program(loadIdl(), provider);
     
     // Derive contract PDA
     const [contractPDA] = PublicKey.findProgramAddressSync(
@@ -230,7 +232,7 @@ export async function updateContractIpfsOnChain(contractId, ipfsHash, creatorWal
     // Create wallet and provider
     const wallet = new Wallet(updater);
     const provider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' });
-    const program = new Program(idl, provider);
+    const program = new Program(loadIdl(), provider);
     
     // Derive contract PDA
     const [contractPDA] = PublicKey.findProgramAddressSync(
