@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { Connection, PublicKey, Transaction, TransactionInstruction, sendAndConfirmTransaction, Keypair } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, TransactionInstruction, Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 import * as anchor from '@coral-xyz/anchor';
 import { Program, AnchorProvider, Wallet } from '@coral-xyz/anchor';
 import { readFileSync } from 'fs';
@@ -12,7 +13,7 @@ function loadIdl() {
   return JSON.parse(readFileSync(join(__dirname, '../../agreed_contracts/idl/agreed_contracts.json'), 'utf8'));
 }
 
-const SOLANA_RPC_URL = 'https://api.devnet.solana.com';
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgd6ofga5DgLRkJrFb';
 const PROGRAM_ID = new PublicKey('2Ye3UPoTi9t7j1vHq6VsqivGxQWgd6ofga5DgLRkJrFb');
 
@@ -24,42 +25,13 @@ export function generateContractHash(contractText) {
 // Store contract proof on Solana devnet
 export async function storeContractProofOnChain(contractHash, userWalletAddress, signerPrivateKey) {
   try {
+    if (!/^[a-f0-9]{64}$/.test(contractHash)) {
+      throw new Error('Contract hash must be a SHA-256 hex digest');
+    }
+    new PublicKey(userWalletAddress);
     // Create connection to Solana devnet
     const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
-    
-    // Create keypair from private key (handle JSON array format from Solana CLI)
-    let signer;
-    try {
-      // First try to decode as base64 JSON array (Solana CLI format)
-      const decodedString = Buffer.from(signerPrivateKey, 'base64').toString('utf8');
-      const keyArray = JSON.parse(decodedString);
-      
-      if (Array.isArray(keyArray) && keyArray.length === 64) {
-        const privateKeyBytes = Buffer.from(keyArray);
-        signer = Keypair.fromSecretKey(privateKeyBytes);
-      } else {
-        throw new Error('Invalid JSON array format');
-      }
-    } catch (error) {
-      // If JSON parsing fails, try direct base64
-      try {
-        const privateKeyBytes = Buffer.from(signerPrivateKey, 'base64');
-        if (privateKeyBytes.length === 64) {
-          signer = Keypair.fromSecretKey(privateKeyBytes);
-        } else {
-          throw new Error('Invalid base64 length');
-        }
-      } catch (base64Error) {
-        // If base64 fails, try as base58
-        try {
-          const bs58 = await import('bs58');
-          const privateKeyBytes = bs58.default.decode(signerPrivateKey);
-          signer = Keypair.fromSecretKey(privateKeyBytes);
-        } catch (bs58Error) {
-          throw new Error('Invalid private key format. Expected base64-encoded JSON array from Solana CLI.');
-        }
-      }
-    }
+    const signer = await parseKeypair(signerPrivateKey);
     
     // Create memo instruction with contract proof and original author address
     const memoText = `ClausebaseProof:${contractHash}:CreatedBy:${userWalletAddress}`;
@@ -83,16 +55,19 @@ export async function storeContractProofOnChain(contractHash, userWalletAddress,
     
     // Send transaction
     const signature = await connection.sendTransaction(transaction, [signer], {
-      skipPreflight: true,
+      skipPreflight: false,
       preflightCommitment: 'confirmed'
     });
     
     // Confirm transaction with longer timeout
-    await connection.confirmTransaction({
+    const confirmation = await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight
     }, 'confirmed');
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
     
     console.log(`Contract proof stored on-chain: ${signature}`);
     return signature;
@@ -104,11 +79,32 @@ export async function storeContractProofOnChain(contractHash, userWalletAddress,
 }
 
 // Verify contract proof exists on-chain
-export async function verifyContractProofOnChain(txHash) {
+export function transactionContainsProof(transaction, contractHash, userWalletAddress) {
+  if (!transaction || transaction.meta?.err || !/^[a-f0-9]{64}$/.test(contractHash)) return false;
+  const message = transaction.transaction?.message;
+  const accountKeys = message?.accountKeys || message?.staticAccountKeys;
+  if (!accountKeys || !message.instructions) return false;
+  const expected = `ClausebaseProof:${contractHash}:CreatedBy:${userWalletAddress}`;
+  return message.instructions.some(instruction => {
+    const programId = instruction.programId || accountKeys[instruction.programIdIndex];
+    if (programId?.toString() !== MEMO_PROGRAM_ID) return false;
+    try {
+      return Buffer.from(bs58.decode(instruction.data)).toString('utf8') === expected;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export async function verifyContractProofOnChain(txHash, contractHash, userWalletAddress) {
   try {
+    if (!/^[a-f0-9]{64}$/.test(contractHash) || !userWalletAddress) {
+      return { exists: false, error: 'Expected contract hash and wallet are required' };
+    }
     const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
     const transaction = await connection.getTransaction(txHash, {
-      commitment: 'confirmed'
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0
     });
     
     if (!transaction) {
@@ -116,8 +112,8 @@ export async function verifyContractProofOnChain(txHash) {
     }
     
     // Check if transaction was successful
-    if (transaction.meta?.err) {
-      return { exists: false, error: 'Transaction failed' };
+    if (!transactionContainsProof(transaction, contractHash, userWalletAddress)) {
+      return { exists: false, error: 'Transaction does not contain the expected contract proof' };
     }
     
     return { exists: true, transaction };
