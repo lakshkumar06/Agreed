@@ -13,7 +13,8 @@ router.post('/register', async (req, res) => {
   try {
     const { name, email, password, wallet_address, role_title } = req.body;
     
-    if (!name || !email || !password || password.length < 8 || wallet_address) {
+    if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        typeof password !== 'string' || password.length < 8 || wallet_address) {
       return res.status(400).json({ error: 'Name, email and a password of at least 8 characters required; link wallets after registration' });
     }
 
@@ -23,7 +24,7 @@ router.post('/register', async (req, res) => {
     db.run(
       `INSERT INTO users (id, name, email, password, wallet_address, role_title) 
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, name, email, hashedPassword, wallet_address, role_title || 'Member'],
+      [userId, name.trim(), email.trim().toLowerCase(), hashedPassword, null, role_title || 'Member'],
       function(err) {
         if (err) {
           if (err.message.includes('UNIQUE constraint failed')) {
@@ -32,7 +33,7 @@ router.post('/register', async (req, res) => {
           return res.status(500).json({ error: 'Failed to create user' });
         }
 
-        const token = jwt.sign({ userId, email }, requireJwtSecret(), { expiresIn: '7d' });
+        const token = jwt.sign({ userId }, requireJwtSecret(), { expiresIn: '7d' });
         
         // Create session
         const sessionId = uuidv4();
@@ -45,7 +46,7 @@ router.post('/register', async (req, res) => {
 
         res.json({ 
           token, 
-          user: { id: userId, name, email, wallet_address, role_title: role_title || 'Member' } 
+          user: { id: userId, name: name.trim(), email: email.trim().toLowerCase(), wallet_address: null, role_title: role_title || 'Member' }
         });
       }
     );
@@ -59,11 +60,11 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password, wallet_address } = req.body;
 
-    if (!email || !password || wallet_address) {
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password || wallet_address) {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+    db.get('SELECT * FROM users WHERE email = ?', [email.trim().toLowerCase()], async (err, user) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
       }
@@ -75,12 +76,14 @@ router.post('/login', async (req, res) => {
       if (!user.password) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
-      const validPassword = await bcrypt.compare(password, user.password);
+      let validPassword;
+      try { validPassword = await bcrypt.compare(password, user.password); }
+      catch { return res.status(500).json({ error: 'Server error' }); }
       if (!validPassword) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const token = jwt.sign({ userId: user.id, email: user.email }, requireJwtSecret(), { expiresIn: '7d' });
+      const token = jwt.sign({ userId: user.id }, requireJwtSecret(), { expiresIn: '7d' });
       
       // Update last login
       db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
@@ -98,7 +101,8 @@ router.post('/login', async (req, res) => {
 // Verify token middleware
 export const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const match = typeof authHeader === 'string' && /^Bearer ([^\s]+)$/i.exec(authHeader);
+  const token = match && match[1];
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
@@ -108,8 +112,13 @@ export const authenticateToken = (req, res, next) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid token' });
     }
-    req.user = user;
-    next();
+    if (!user || typeof user.userId !== 'string') return res.status(403).json({ error: 'Invalid token' });
+    db.get('SELECT id, email, name, wallet_address FROM users WHERE id = ?', [user.userId], (dbError, row) => {
+      if (dbError) return res.status(500).json({ error: 'Database error' });
+      if (!row) return res.status(403).json({ error: 'Invalid token' });
+      req.user = { userId: row.id, email: row.email, name: row.name, wallet_address: row.wallet_address };
+      next();
+    });
   });
 };
 
@@ -158,7 +167,7 @@ router.post('/wallet/login', consumeWalletProof, (req, res) => {
   db.get('SELECT * FROM users WHERE wallet_address = ?', [req.body.wallet_address], (err, user) => {
     if (err) return res.status(500).json({ error: 'Database error' });
     if (!user) return res.status(404).json({ error: 'Wallet is not linked to an account' });
-    const token = jwt.sign({ userId: user.id, email: user.email }, requireJwtSecret(), { expiresIn: '7d' });
+    const token = jwt.sign({ userId: user.id }, requireJwtSecret(), { expiresIn: '7d' });
     db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id]);
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, wallet_address: user.wallet_address, role_title: user.role_title } });
   });
