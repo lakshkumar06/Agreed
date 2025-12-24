@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS organizations (
   FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS organization_invitations (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  email TEXT,
+  wallet_address TEXT,
+  invited_by TEXT NOT NULL,
+  token TEXT UNIQUE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted')),
+  expires_at TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (org_id) REFERENCES organizations(id),
+  FOREIGN KEY (invited_by) REFERENCES users(id)
+);
+
 -- Contracts table
 CREATE TABLE IF NOT EXISTS contracts (
   id TEXT PRIMARY KEY,
