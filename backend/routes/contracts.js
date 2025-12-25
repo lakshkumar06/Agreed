@@ -1,6 +1,7 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
+import { withTransaction } from '../database/transaction.js';
 import { authenticateToken } from './auth.js';
 import { requireContractAccess } from './contractAccess.js';
 import { sendInvitationEmailDev } from '../services/emailService.js';
@@ -30,75 +31,36 @@ router.post('/', authenticateToken, async (req, res) => {
     // Pin the content to ensure it persists
     await pinToIPFS(ipfsHash);
     
-    // First create contract in database
-    await new Promise((resolve, reject) => {
-  db.run(
-    'INSERT INTO contracts (id, title, description, current_version, created_by, content, ipfs_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [contractId, title, description, versionId, req.user.userId, initialContent, ipfsHash],
-    function(err) {
-          if (err) reject(err);
-          else resolve();
-      }
+    await withTransaction(async ({ run }) => {
+      await run(
+        'INSERT INTO contracts (id, title, description, current_version, created_by, content, ipfs_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [contractId, title, description, versionId, req.user.userId, initialContent, ipfsHash]
       );
-    });
-
-      // Add creator as contract member
-      const memberId = uuidv4();
-    await new Promise((resolve, reject) => {
-      db.run(
+      await run(
         'INSERT INTO contract_members (id, contract_id, user_id, role_in_contract, weight) VALUES (?, ?, ?, ?, ?)',
-        [memberId, contractId, req.user.userId, 'Creator', 1.0],
-        function(err) {
-          if (err) reject(err);
-          else resolve();
-          }
+        [uuidv4(), contractId, req.user.userId, 'Creator', 1.0]
+      );
+      await run(
+        `INSERT INTO contract_versions
+         (id, contract_id, version_number, parent_version_id, author_id, content, ipfs_hash, diff_summary, commit_message, merged, approval_status, approval_score)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [versionId, contractId, 1, null, req.user.userId, initialContent, ipfsHash, 'Initial version', 'Initial commit', 1, 'merged', 1]
+      );
+      await run(
+        'INSERT INTO contract_approvals (id, version_id, user_id, vote, comment) VALUES (?, ?, ?, ?, ?)',
+        [uuidv4(), versionId, req.user.userId, 'approve', 'Auto-approved by creator']
       );
     });
 
-          // Create initial version (merged by default) with IPFS hash
-    await new Promise((resolve, reject) => {
-          db.run(
-            `INSERT INTO contract_versions 
-             (id, contract_id, version_number, parent_version_id, author_id, content, ipfs_hash, diff_summary, commit_message, merged, approval_status, approval_score)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [versionId, contractId, 1, null, req.user.userId, initialContent, ipfsHash, 'Initial version', 'Initial commit', 1, 'merged', 1],
-            function(err) {
-          if (err) reject(err);
-          else resolve();
-              }
-      );
-    });
-
-              // Add automatic approval from creator
-              const approvalId = uuidv4();
-    await new Promise((resolve, reject) => {
-              db.run(
-                'INSERT INTO contract_approvals (id, version_id, user_id, vote, comment) VALUES (?, ?, ?, ?, ?)',
-                [approvalId, versionId, req.user.userId, 'approve', 'Auto-approved by creator'],
-                function(err) {
-          if (err) reject(err);
-          else resolve();
-                  }
-      );
-    });
-
-                  res.json({ 
-                    contract: { 
-                      id: contractId, 
-                      title, 
-                      description, 
-                      status: 'draft',
-                      current_version: versionId,
-                      created_by: req.user.userId,
-        created_at: new Date().toISOString(),
-        ipfs_hash: ipfsHash,
-        needs_solana_init: true // Flag for frontend to initialize on Solana
-                    } 
-                  });
+    res.json({ contract: {
+      id: contractId, title, description, status: 'draft', current_version: versionId,
+      created_by: req.user.userId, created_at: new Date().toISOString(),
+      ipfs_hash: ipfsHash, needs_solana_init: true,
+    } });
   } catch (err) {
     console.error('Error creating contract:', err);
     return res.status(500).json({ error: 'Failed to create contract' });
-    }
+  }
 });
 
 // Get user contracts
@@ -331,11 +293,13 @@ router.get('/:id/invitations', authenticateToken, (req, res) => {
   const { id } = req.params;
   
   db.all(
-    `SELECT ci.*, u.name as invited_by_name
+    `SELECT ci.id, ci.contract_id, ci.email, ci.wallet_address, ci.role_in_contract,
+            ci.weight, ci.status, ci.created_at, ci.expires_at, u.name as invited_by_name
      FROM contract_invitations ci
      JOIN users u ON ci.invited_by = u.id
-     WHERE ci.contract_id = ?`,
-    [id],
+     JOIN contracts c ON c.id = ci.contract_id
+     WHERE ci.contract_id = ? AND c.created_by = ?`,
+    [id, req.user.userId],
     (err, invitations) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -355,8 +319,8 @@ router.get('/invite/:token', (req, res) => {
      FROM contract_invitations ci
      JOIN contracts c ON ci.contract_id = c.id
      JOIN users u ON ci.invited_by = u.id
-     WHERE ci.invitation_token = ? AND ci.status = 'pending' AND ci.expires_at > datetime('now')`,
-    [token],
+     WHERE ci.invitation_token = ? AND ci.status = 'pending' AND ci.expires_at > ?`,
+    [token, new Date().toISOString()],
     (err, invitation) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -370,47 +334,50 @@ router.get('/invite/:token', (req, res) => {
 });
 
 // Accept invitation
-router.post('/invite/:token/accept', authenticateToken, (req, res) => {
+router.post('/invite/:token/accept', authenticateToken, async (req, res) => {
   const { token } = req.params;
-  
-  // Get invitation details
-  db.get(
-    'SELECT * FROM contract_invitations WHERE invitation_token = ? AND status = "pending" AND expires_at > datetime("now")',
-    [token],
-    (err, invitation) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      if (!invitation) {
-        return res.status(404).json({ error: 'Invalid or expired invitation' });
-      }
-
-      // Check if user email matches invitation email
-      if (invitation.email && req.user.email !== invitation.email) {
-        return res.status(403).json({ error: 'Email address does not match invitation' });
-      }
-
-      // Add user to contract
-      const memberId = uuidv4();
-      db.run(
-        'INSERT INTO contract_members (id, contract_id, user_id, role_in_contract, weight) VALUES (?, ?, ?, ?, ?)',
-        [memberId, invitation.contract_id, req.user.userId, invitation.role_in_contract, invitation.weight],
-        function(err) {
-          if (err) {
-            return res.status(500).json({ error: 'Failed to join contract' });
-          }
-
-          // Update invitation status
-          db.run(
-            'UPDATE contract_invitations SET status = "accepted" WHERE id = ?',
-            [invitation.id]
-          );
-
-          res.json({ message: 'Successfully joined the contract' });
-        }
+  try {
+    await withTransaction(async ({ get, run }) => {
+      const invitation = await get(
+        'SELECT * FROM contract_invitations WHERE invitation_token = ? AND status = ? AND expires_at > ?',
+        [token, 'pending', new Date().toISOString()]
       );
-    }
-  );
+      if (!invitation) {
+        const error = new Error('Invalid or expired invitation');
+        error.status = 404;
+        throw error;
+      }
+      if ((invitation.email && req.user.email !== invitation.email) ||
+          (invitation.wallet_address && req.user.wallet_address !== invitation.wallet_address)) {
+        const error = new Error('Invitation recipient does not match');
+        error.status = 403;
+        throw error;
+      }
+      const member = await get(
+        'SELECT 1 FROM contract_members WHERE contract_id = ? AND user_id = ?',
+        [invitation.contract_id, req.user.userId]
+      );
+      if (member) {
+        const error = new Error('Already a contract member');
+        error.status = 409;
+        throw error;
+      }
+      await run(
+        'INSERT INTO contract_members (id, contract_id, user_id, role_in_contract, weight) VALUES (?, ?, ?, ?, ?)',
+        [uuidv4(), invitation.contract_id, req.user.userId, invitation.role_in_contract, invitation.weight]
+      );
+      const { changes } = await run(
+        'UPDATE contract_invitations SET status = ? WHERE id = ? AND status = ?',
+        ['accepted', invitation.id, 'pending']
+      );
+      if (changes !== 1) throw new Error('Invitation changed during acceptance');
+    });
+    res.json({ message: 'Successfully joined the contract' });
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    console.error('Error accepting invitation:', error);
+    res.status(500).json({ error: 'Failed to accept invitation' });
+  }
 });
 
 // Resend invitation
@@ -423,8 +390,8 @@ router.post('/invite/:id/resend', authenticateToken, (req, res) => {
      FROM contract_invitations ci
      JOIN contracts c ON ci.contract_id = c.id
      JOIN users u ON ci.invited_by = u.id
-     WHERE ci.id = ? AND ci.status = 'pending'`,
-    [id],
+     WHERE ci.id = ? AND ci.status = 'pending' AND ci.expires_at > ? AND c.created_by = ?`,
+    [id, new Date().toISOString(), req.user.userId],
     (err, invitation) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -520,7 +487,7 @@ router.post('/:id/solana-init', authenticateToken, async (req, res) => {
 });
 
 // Get Solana contract PDA for a contract
-router.get('/:id/solana-pda', authenticateToken, async (req, res) => {
+router.get('/:id/solana-pda', authenticateToken, requireContractAccess, async (req, res) => {
   const { id } = req.params;
   
   try {
