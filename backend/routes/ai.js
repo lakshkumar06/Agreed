@@ -1,9 +1,10 @@
 import express from 'express';
-import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
+import { replaceContractAnalysis } from '../database/contractAnalysis.js';
 import { authenticateToken } from './auth.js';
 import { requireContractAccess, requireMilestoneAccess } from './contractAccess.js';
 import { processContractFile, chatWithContract } from '../services/aiService.js';
+import { uploadToIPFS, pinToIPFS } from '../services/ipfsService.js';
 
 const router = express.Router();
 router.use('/contracts/:id', authenticateToken, requireContractAccess);
@@ -14,59 +15,19 @@ router.post('/contracts/:id/process', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { fileContent } = req.body;
 
-  if (!fileContent) {
+  if (typeof fileContent !== 'string' || !fileContent.trim()) {
     return res.status(400).json({ error: 'File content required' });
   }
 
   try {
-    // Update contract content with uploaded file content
-    db.run(
-      'UPDATE contracts SET content = ? WHERE id = ?',
-      [fileContent, id],
-      async function(err) {
-        if (err) {
-          console.error('Error updating contract content:', err);
-          return res.status(500).json({ error: 'Failed to update contract content' });
-        }
-
-        // Also update the initial version content
-        db.run(
-          'UPDATE contract_versions SET content = ? WHERE contract_id = ? AND version_number = 1',
-          [fileContent, id]
-        );
-      }
-    );
-
-    // Process with AI
+    const contract = await new Promise((resolve, reject) =>
+      db.get('SELECT content FROM contracts WHERE id = ?', [id],
+        (error, row) => error ? reject(error) : resolve(row)));
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
     const { clauses, deadlines, paymentMilestones } = await processContractFile(fileContent);
-
-    // Save clauses to database
-    for (let i = 0; i < clauses.length; i++) {
-      const clause = clauses[i];
-      const clauseId = uuidv4();
-      db.run(
-        'INSERT INTO contract_clauses (id, contract_id, title, content, category, display_order) VALUES (?, ?, ?, ?, ?, ?)',
-        [clauseId, id, clause.title, clause.content, clause.category || 'General', i]
-      );
-    }
-
-    // Save deadlines to database
-    for (const deadline of deadlines) {
-      const deadlineId = uuidv4();
-      db.run(
-        'INSERT INTO contract_deadlines (id, contract_id, description, date, clause_reference) VALUES (?, ?, ?, ?, ?)',
-        [deadlineId, id, deadline.description, deadline.date || 'TBD', deadline.clause_reference || '']
-      );
-    }
-
-    // Save payment milestone suggestions to database
-    for (const milestone of paymentMilestones) {
-      const milestoneId = uuidv4();
-      db.run(
-        'INSERT INTO payment_milestone_suggestions (id, contract_id, description, estimated_amount, deadline, suggested_recipient) VALUES (?, ?, ?, ?, ?, ?)',
-        [milestoneId, id, milestone.description, milestone.estimated_amount || 'TBD', milestone.deadline || 'TBD', milestone.suggested_recipient || 'TBD']
-      );
-    }
+    const ipfsHash = await uploadToIPFS(fileContent);
+    await pinToIPFS(ipfsHash);
+    await replaceContractAnalysis(id, fileContent, { clauses, deadlines, paymentMilestones }, contract.content, req.user.userId, ipfsHash);
 
     res.json({ 
       success: true,
@@ -75,6 +36,9 @@ router.post('/contracts/:id/process', authenticateToken, async (req, res) => {
       paymentMilestones: paymentMilestones.length
     });
   } catch (error) {
+    if (error.code === 'STALE_CONTRACT') {
+      return res.status(409).json({ error: 'Contract changed or is no longer an initial draft' });
+    }
     console.error('Error processing contract:', error);
     res.status(500).json({ error: 'Failed to process contract' });
   }
@@ -112,48 +76,53 @@ router.get('/contracts/:id/deadlines', authenticateToken, (req, res) => {
   );
 });
 
-// Store chat history in memory (per user, per contract)
+// Ephemeral chat context. Bound it so abandoned sessions cannot grow forever.
 const chatSessions = new Map();
+const CHAT_TTL_MS = 60 * 60 * 1000;
+const MAX_CHAT_SESSIONS = 1000;
+
+function getChatHistory(key) {
+  const session = chatSessions.get(key);
+  if (!session) return [];
+  if (session.expiresAt <= Date.now()) {
+    chatSessions.delete(key);
+    return [];
+  }
+  return session.messages;
+}
+
+function saveChatHistory(key, messages) {
+  chatSessions.delete(key);
+  chatSessions.set(key, { messages: messages.slice(-10), expiresAt: Date.now() + CHAT_TTL_MS });
+  while (chatSessions.size > MAX_CHAT_SESSIONS) {
+    chatSessions.delete(chatSessions.keys().next().value);
+  }
+}
 
 // Chat with contract
 router.post('/contracts/:id/chat', authenticateToken, async (req, res) => {
   const { id } = req.params;
   const { question } = req.body;
 
-  if (!question) {
+  if (typeof question !== 'string' || !question.trim()) {
     return res.status(400).json({ error: 'Question required' });
   }
 
   try {
-    // Get contract content
-    db.get(
-      'SELECT content FROM contracts WHERE id = ?',
-      [id],
-      async (err, contract) => {
-        if (err || !contract) {
-          return res.status(404).json({ error: 'Contract not found' });
-        }
-
-        // Get chat history from session
-        const sessionKey = `${req.user.userId}_${id}`;
-        let chatHistory = chatSessions.get(sessionKey) || [];
-
-        // Get AI response
-        const answer = await chatWithContract(question, contract.content, chatHistory);
-
-        // Save to session memory (keep last 5 messages)
-        chatHistory.push(
-          { role: 'user', content: question },
-          { role: 'assistant', content: answer }
-        );
-        if (chatHistory.length > 10) {
-          chatHistory = chatHistory.slice(-10);
-        }
-        chatSessions.set(sessionKey, chatHistory);
-
-        res.json({ answer });
-      }
-    );
+    const contract = await new Promise((resolve, reject) =>
+      db.get('SELECT content FROM contracts WHERE id = ?', [id],
+        (error, row) => error ? reject(error) : resolve(row)));
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
+    if (!contract.content) return res.status(400).json({ error: 'Contract has no content' });
+    const sessionKey = `${req.user.userId}:${id}`;
+    const chatHistory = getChatHistory(sessionKey);
+    const answer = await chatWithContract(question, contract.content, chatHistory);
+    saveChatHistory(sessionKey, [
+      ...chatHistory,
+      { role: 'user', content: question },
+      { role: 'assistant', content: answer },
+    ]);
+    res.json({ answer });
   } catch (error) {
     console.error('Error in chat:', error);
     res.status(500).json({ error: 'Failed to process chat' });
@@ -220,8 +189,8 @@ router.get('/contracts/:id/chat', authenticateToken, (req, res) => {
   const { id } = req.params;
 
   // Get from session memory
-  const sessionKey = `${req.user.userId}_${id}`;
-  const chatHistory = chatSessions.get(sessionKey) || [];
+  const sessionKey = `${req.user.userId}:${id}`;
+  const chatHistory = getChatHistory(sessionKey);
 
   // Convert to format expected by frontend
   const history = [];

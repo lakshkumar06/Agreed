@@ -7,6 +7,13 @@ if (!apiKey) {
 
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
+export function parseAnalysisArray(text) {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const value = JSON.parse(trimmed);
+  if (!Array.isArray(value)) throw new TypeError('AI analysis must be a JSON array');
+  return value;
+}
+
 export async function processContractFile(fileContent) {
   if (!genAI) {
     throw new Error('Gemini API key not configured. Please set GEMINI_API_KEY environment variable.');
@@ -26,14 +33,6 @@ ${fileContent}
 
 Return ONLY valid JSON array format, no markdown or extra text.`;
 
-    const clauseResult = await model.generateContent(clausePrompt);
-    const clauseResponse = clauseResult.response;
-    const clauseText = clauseResponse.text();
-    
-    // Extract JSON from response
-    const jsonMatch = clauseText.match(/\[[\s\S]*\]/);
-    const clauses = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-
     // Extract deadlines
     const deadlinePrompt = `Extract all deadlines, dates, and time-sensitive items from this contract. Format as JSON array with:
 - description: What the deadline is for
@@ -44,13 +43,6 @@ Contract text:
 ${fileContent}
 
 Return ONLY valid JSON array format, no markdown or extra text.`;
-
-    const deadlineResult = await model.generateContent(deadlinePrompt);
-    const deadlineResponse = deadlineResult.response;
-    const deadlineText = deadlineResponse.text();
-    
-    const deadlineJsonMatch = deadlineText.match(/\[[\s\S]*\]/);
-    const deadlines = deadlineJsonMatch ? JSON.parse(deadlineJsonMatch[0]) : [];
 
     // Extract payment milestones
     const milestonePrompt = `Extract all payment milestones from this contract. Look for:
@@ -71,12 +63,13 @@ ${fileContent}
 
 Return ONLY valid JSON array format, no markdown or extra text. If no payment milestones found, return empty array [].`;
 
-    const milestoneResult = await model.generateContent(milestonePrompt);
-    const milestoneResponse = milestoneResult.response;
-    const milestoneText = milestoneResponse.text();
-    
-    const milestoneJsonMatch = milestoneText.match(/\[[\s\S]*\]/);
-    const paymentMilestones = milestoneJsonMatch ? JSON.parse(milestoneJsonMatch[0]) : [];
+    const responses = await Promise.all([
+      model.generateContent(clausePrompt),
+      model.generateContent(deadlinePrompt),
+      model.generateContent(milestonePrompt),
+    ]);
+    const [clauses, deadlines, paymentMilestones] = responses.map(result =>
+      parseAnalysisArray(result.response.text()));
 
     return {
       clauses,
@@ -117,4 +110,3 @@ export async function chatWithContract(question, contractContent, chatHistory = 
     throw error;
   }
 }
-
