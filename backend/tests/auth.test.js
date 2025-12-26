@@ -69,4 +69,34 @@ test('authentication rejects unsigned wallets and consumes signed challenges onc
   assert.equal(ownerStatus.status, 200);
   const addMember = await post('/contracts/private-contract/members', { user_id: outsider.data.user.id, role_in_contract: 'Reviewer' }, register.data.token);
   assert.equal(addMember.status, 200);
+
+  const ownerOrg = await post('/orgs', { name: 'Owner organization' }, register.data.token);
+  assert.equal(ownerOrg.status, 200);
+  const outsiderOrg = await post('/orgs', { name: 'Outsider organization' }, outsider.data.token);
+  assert.equal(outsiderOrg.status, 200);
+  assert.equal((await post('/orgs/members', { email: 'ada@example.com' }, outsider.data.token)).status, 200);
+  assert.equal((await post('/orgs/members', { email: 'grace@example.com' }, register.data.token)).status, 200);
+  const outsiderInvite = await post('/orgs/members', { email: 'new@example.com' }, outsider.data.token);
+  assert.equal(outsiderInvite.status, 200);
+  assert.equal((await post(`/orgs/members/invite/${outsiderInvite.data.invitation.token}/accept`, {}, register.data.token)).status, 403);
+  const newUser = await post('/auth/register', { name: 'New', email: 'new@example.com', password: 'another secure password' });
+  assert.equal(newUser.status, 200);
+  assert.equal((await post(`/orgs/members/invite/${outsiderInvite.data.invitation.token}/accept`, {}, newUser.data.token)).status, 200);
+  assert.equal((await post(`/orgs/members/invite/${outsiderInvite.data.invitation.token}/accept`, {}, newUser.data.token)).status, 404);
+  assert.equal((await post('/orgs/members', { email: 'new@example.com' }, newUser.data.token)).status, 403);
+
+  const db2 = new sqlite3.Database(join(dir, 'test.db'));
+  const run = (sql, args) => new Promise((resolve, reject) => db2.run(sql, args, err => err ? reject(err) : resolve()));
+  await run('INSERT INTO contracts (id, title, created_by) VALUES (?, ?, ?)', ['other-contract', 'Other private agreement', outsider.data.user.id]);
+  await run('INSERT INTO contract_versions (id, contract_id, version_number, author_id, content) VALUES (?, ?, ?, ?, ?)', ['other-version', 'other-contract', 1, outsider.data.user.id, 'Private terms']);
+  await run('INSERT INTO contract_comments (id, version_id, user_id, comment) VALUES (?, ?, ?, ?)', ['other-comment', 'other-version', outsider.data.user.id, 'Private discussion']);
+  await run('INSERT INTO contract_members (id, contract_id, user_id, role_in_contract, weight) VALUES (?, ?, ?, ?, ?)', ['owner-member', 'private-contract', register.data.user.id, 'Creator', 1]);
+  await new Promise(resolve => db2.close(resolve));
+  assert.equal((await post('/contracts/private-contract/versions/other-version/approve', { vote: 'approve' }, register.data.token)).status, 404);
+  assert.equal((await post('/contracts/private-contract/versions/other-version/comments', { comment: 'Cross contract' }, register.data.token)).status, 404);
+  const headers = { authorization: `Bearer ${register.data.token}` };
+  assert.equal((await fetch(`${base}/contracts/private-contract/versions/other-version/approvals`, { headers })).status, 404);
+  const comments = await fetch(`${base}/contracts/private-contract/versions/other-version/comments`, { headers });
+  assert.equal(comments.status, 404);
+  assert.equal((await fetch(`${base}/contracts/other-contract/solana-pda`, { headers })).status, 404);
 });
