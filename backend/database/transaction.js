@@ -9,6 +9,8 @@ export async function withTransaction(work) {
     }));
   const get = (sql, values = []) => new Promise((resolve, reject) =>
     connection.get(sql, values, (error, row) => error ? reject(error) : resolve(row)));
+  const all = (sql, values = []) => new Promise((resolve, reject) =>
+    connection.all(sql, values, (error, rows) => error ? reject(error) : resolve(rows)));
   const close = () => new Promise((resolve, reject) =>
     connection.close(error => error ? reject(error) : resolve()));
   let begun = false;
@@ -17,7 +19,7 @@ export async function withTransaction(work) {
     await run('PRAGMA foreign_keys = ON');
     await run('BEGIN IMMEDIATE');
     begun = true;
-    const result = await work({ run, get });
+    const result = await work({ run, get, all });
     await run('COMMIT');
     begun = false;
     return result;

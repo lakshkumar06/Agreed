@@ -1,11 +1,16 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../database/init.js';
+import { withTransaction } from '../database/transaction.js';
 import { authenticateToken } from './auth.js';
-import { generateContractHash, storeContractProofOnChain, updateContractIpfsOnChain, deriveContractPDA } from '../services/solanaService.js';
+import { updateContractIpfsOnChain } from '../services/solanaService.js';
 import { uploadToIPFS, pinToIPFS, retrieveFromIPFS } from '../services/ipfsService.js';
 
 const router = express.Router();
+
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
+}
 
 // Simple diff function
 function computeDiff(oldText, newText) {
@@ -42,8 +47,8 @@ async function storeContractProof(versionId, contractId) {
   try {
       // Get version with IPFS hash
       db.get(
-        'SELECT ipfs_hash FROM contract_versions WHERE id = ?',
-        [versionId],
+        'SELECT ipfs_hash FROM contract_versions WHERE id = ? AND contract_id = ?',
+        [versionId, contractId],
         async (err, version) => {
           if (err || !version) {
             console.error('[storeContractProof] Error fetching version:', err);
@@ -122,147 +127,61 @@ async function storeContractProof(versionId, contractId) {
   });
 }
 
-// Create new version
-router.post('/contracts/:contractId/versions', authenticateToken, (req, res) => {
+// The latest parent is checked again under the write lock. A concurrent editor
+// receives a conflict instead of creating two versions with the same number.
+export async function commitVersion({ contractId, userId, content, commitMessage, ipfsHash, expectedParentId, oldContent }) {
+  return withTransaction(async sql => {
+    const contract = await sql.get(`SELECT id, current_version FROM contracts WHERE id = ? AND
+      (created_by = ? OR EXISTS (SELECT 1 FROM contract_members WHERE contract_id = ? AND user_id = ?))`,
+    [contractId, userId, contractId, userId]);
+    if (!contract) throw httpError(404, 'Contract not found');
+    const latest = await sql.get('SELECT id, version_number FROM contract_versions WHERE contract_id = ? ORDER BY version_number DESC LIMIT 1', [contractId]);
+    if ((latest?.id ?? null) !== expectedParentId) throw httpError(409, 'Contract changed; refresh before editing');
+    const versionId = uuidv4();
+    const diff = computeDiff(oldContent, content);
+    const memberCount = await sql.get('SELECT COUNT(DISTINCT user_id) AS count FROM contract_members WHERE contract_id = ?', [contractId]);
+    const approvalStatus = memberCount.count === 1 ? 'approved' : 'pending';
+    await sql.run(`INSERT INTO contract_versions
+      (id, contract_id, version_number, parent_version_id, author_id, content, ipfs_hash,
+       diff_summary, commit_message, merged, approval_status, approval_score)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1)`,
+    [versionId, contractId, (latest?.version_number ?? 0) + 1, latest?.id ?? null,
+      userId, content, ipfsHash, diff.summary, commitMessage, approvalStatus]);
+    if (latest) await sql.run('INSERT INTO contract_diffs (id, version_from_id, version_to_id, diff_json) VALUES (?, ?, ?, ?)',
+      [uuidv4(), latest.id, versionId, JSON.stringify(diff.full)]);
+    await sql.run(`INSERT INTO contract_approvals (id, version_id, user_id, vote, comment)
+      VALUES (?, ?, ?, 'approve', 'Auto-approved by author')`, [uuidv4(), versionId, userId]);
+    return sql.get(`SELECT v.*, u.name AS author_name FROM contract_versions v
+      JOIN users u ON u.id = v.author_id WHERE v.id = ?`, [versionId]);
+  });
+}
+
+router.post('/contracts/:contractId/versions', authenticateToken, async (req, res) => {
   const { contractId } = req.params;
   const { content, commit_message } = req.body;
-
-  if (!content) {
-    return res.status(400).json({ error: 'Content required' });
+  if (typeof content !== 'string' || !content.trim() ||
+      (commit_message !== undefined && typeof commit_message !== 'string')) {
+    return res.status(400).json({ error: 'Content and a valid commit message required' });
   }
-
-  // Verify contract exists and user has access
-  db.get(
-    'SELECT * FROM contracts WHERE id = ? AND (created_by = ? OR id IN (SELECT contract_id FROM contract_members WHERE user_id = ?))',
-    [contractId, req.user.userId, req.user.userId],
-    (err, contract) => {
-      if (err || !contract) {
-        return res.status(404).json({ error: 'Contract not found' });
-      }
-
-      // Get latest version
-      db.get(
-        'SELECT * FROM contract_versions WHERE contract_id = ? ORDER BY version_number DESC LIMIT 1',
-        [contractId],
-        async (err, latestVersion) => {
-          if (err) {
-            return res.status(500).json({ error: 'Database error' });
-          }
-
-          const versionNumber = latestVersion ? latestVersion.version_number + 1 : 1;
-          const versionId = uuidv4();
-          const parentVersionId = latestVersion ? latestVersion.id : null;
-
-          // Upload content to IPFS immediately
-          try {
-            console.log('[CREATE_VERSION] Uploading new version content to IPFS...');
-            const ipfsHash = await uploadToIPFS(content);
-            console.log('[CREATE_VERSION] Content uploaded to IPFS:', ipfsHash);
-
-            // Pin the content to IPFS
-            await pinToIPFS(ipfsHash);
-
-            // Compute diff - retrieve old content from IPFS
-            let oldContent = '';
-            if (latestVersion && latestVersion.ipfs_hash) {
-              try {
-                oldContent = await retrieveFromIPFS(latestVersion.ipfs_hash);
-              } catch (e) {
-                console.error('[CREATE_VERSION] Failed to retrieve old content from IPFS:', e.message);
-                throw new Error('Cannot create version: IPFS retrieval failed');
-              }
-            }
-          const diff = computeDiff(oldContent, content);
-
-            // Create version with IPFS hash (NO content stored in DB)
-          db.run(
-            `INSERT INTO contract_versions 
-               (id, contract_id, version_number, parent_version_id, author_id, ipfs_hash, diff_summary, commit_message, merged, approval_status, approval_score)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [versionId, contractId, versionNumber, parentVersionId, req.user.userId, ipfsHash, diff.summary, commit_message || '', 0, 'pending', 0],
-            function(err) {
-              if (err) {
-                console.error('Error creating version:', err);
-                return res.status(500).json({ error: 'Failed to create version' });
-              }
-
-              // Create diff record if parent exists
-              if (latestVersion) {
-                const diffId = uuidv4();
-                db.run(
-                  'INSERT INTO contract_diffs (id, version_from_id, version_to_id, diff_json) VALUES (?, ?, ?, ?)',
-                  [diffId, latestVersion.id, versionId, JSON.stringify(diff.full)]
-                );
-              }
-
-                // Update contract's current version (NO content stored)
-              db.run(
-                  'UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                  [versionId, contractId]
-              );
-
-              // Add automatic approval from the author (all changes are auto-approved by their author)
-              const approvalId = uuidv4();
-              db.run(
-                'INSERT INTO contract_approvals (id, version_id, user_id, vote, comment) VALUES (?, ?, ?, ?, ?)',
-                [approvalId, versionId, req.user.userId, 'approve', 'Auto-approved by author'],
-                function(err) {
-                  if (err) {
-                      console.error('[CREATE_VERSION] Error creating auto-approval:', err);
-                  }
-
-                  // Update version status to approved
-                    console.log('[CREATE_VERSION] Auto-approving version', versionId);
-                  db.run(
-                    'UPDATE contract_versions SET approval_status = ?, approval_score = ? WHERE id = ?',
-                    ['approved', 1, versionId]
-                  );
-
-                    // Return created version with content from IPFS
-                  db.get(
-                    `SELECT v.*, u.name as author_name
-                     FROM contract_versions v
-                     JOIN users u ON v.author_id = u.id
-                     WHERE v.id = ?`,
-                    [versionId],
-                      async (err, version) => {
-                      if (err) {
-                          console.error('[CREATE_VERSION] Error fetching created version:', err);
-                        return res.status(500).json({ error: 'Database error' });
-                      }
-                        console.log('[CREATE_VERSION] Version created with status:', version.approval_status);
-                        
-                        // Fetch content from IPFS
-                        let versionContent = content;
-                        try {
-                          versionContent = await retrieveFromIPFS(version.ipfs_hash);
-                        } catch (e) {
-                          console.error('[CREATE_VERSION] Failed to retrieve content from IPFS:', e.message);
-                          // Still return the version but log the error
-                          versionContent = content;
-                        }
-                        
-                        // Add default values and content
-                      const versionWithDefaults = {
-                        ...version,
-                          content: versionContent,
-                        approval_status: version.approval_status || 'approved',
-                        approval_score: version.approval_score || 1
-                      };
-                      res.json({ version: versionWithDefaults });
-                    }
-                  );
-                }
-              );
-            }
-          );
-          } catch (error) {
-            console.error('[CREATE_VERSION] Error uploading to IPFS:', error);
-            return res.status(500).json({ error: 'Failed to upload to IPFS' });
-        }
-        });
-    }
-  );
+  try {
+    const contract = await new Promise((resolve, reject) => db.get(`SELECT id FROM contracts WHERE id = ? AND
+      (created_by = ? OR EXISTS (SELECT 1 FROM contract_members WHERE contract_id = ? AND user_id = ?))`,
+    [contractId, req.user.userId, contractId, req.user.userId], (error, row) => error ? reject(error) : resolve(row)));
+    if (!contract) return res.status(404).json({ error: 'Contract not found' });
+    const latest = await new Promise((resolve, reject) => db.get(
+      'SELECT id, content, ipfs_hash FROM contract_versions WHERE contract_id = ? ORDER BY version_number DESC LIMIT 1',
+      [contractId], (error, row) => error ? reject(error) : resolve(row)));
+    let oldContent = latest?.content ?? '';
+    if (latest && !latest.content && latest.ipfs_hash) oldContent = await retrieveFromIPFS(latest.ipfs_hash);
+    const ipfsHash = await uploadToIPFS(content);
+    await pinToIPFS(ipfsHash);
+    const version = await commitVersion({ contractId, userId: req.user.userId, content,
+      commitMessage: commit_message || '', ipfsHash, expectedParentId: latest?.id ?? null, oldContent });
+    res.json({ version });
+  } catch (error) {
+    if (!error.status) console.error('[CREATE_VERSION] Failed:', error);
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to create version' });
+  }
 });
 
 // Get all versions for a contract
@@ -467,212 +386,57 @@ router.get('/contracts/:contractId/history', authenticateToken, (req, res) => {
   );
 });
 
-// Submit approval/rejection for a version
-router.post('/contracts/:contractId/versions/:versionId/approve', authenticateToken, (req, res) => {
-  const { contractId, versionId } = req.params;
+export async function recordVersionVote({ contractId, versionId, userId, vote, comment }) {
+  return withTransaction(async sql => {
+    const contract = await sql.get(`SELECT id, current_version FROM contracts WHERE id = ? AND
+      (created_by = ? OR EXISTS (SELECT 1 FROM contract_members WHERE contract_id = ? AND user_id = ?))`,
+    [contractId, userId, contractId, userId]);
+    if (!contract) throw httpError(404, 'Contract not found');
+    const member = await sql.get('SELECT 1 FROM contract_members WHERE contract_id = ? AND user_id = ?', [contractId, userId]);
+    if (!member) throw httpError(403, 'Not a member of this contract');
+    const version = await sql.get('SELECT author_id, parent_version_id, merged FROM contract_versions WHERE id = ? AND contract_id = ?', [versionId, contractId]);
+    if (!version) throw httpError(404, 'Version not found');
+    if (version.merged) throw httpError(409, 'Version is already merged');
+    if (version.author_id === userId) throw httpError(403, 'You cannot vote on your own version');
+    const approvalId = uuidv4();
+    await sql.run(`INSERT INTO contract_approvals (id, version_id, user_id, vote, comment)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(version_id, user_id) DO UPDATE SET
+      vote = excluded.vote, comment = excluded.comment, created_at = CURRENT_TIMESTAMP`,
+    [approvalId, versionId, userId, vote, comment || null]);
+    const members = await sql.all('SELECT DISTINCT user_id FROM contract_members WHERE contract_id = ?', [contractId]);
+    const approvals = await sql.all(`SELECT ca.user_id, ca.vote FROM contract_approvals ca
+      WHERE ca.version_id = ?`, [versionId]);
+    const votes = new Map(approvals.map(row => [row.user_id, row.vote]));
+    const approvalCount = members.filter(row => votes.get(row.user_id) === 'approve').length;
+    const rejectionCount = members.filter(row => votes.get(row.user_id) === 'reject').length;
+    const allApproved = members.length > 0 && approvalCount === members.length;
+    const autoMerge = allApproved && (version.parent_version_id ?? null) === (contract.current_version ?? null);
+    const status = autoMerge ? 'merged' : allApproved ? 'approved' : rejectionCount > 0 ? 'rejected' : 'pending';
+    await sql.run('UPDATE contract_versions SET approval_status = ?, approval_score = ?, merged = ? WHERE id = ?',
+      [status, approvalCount, Number(autoMerge), versionId]);
+    if (autoMerge) await sql.run('UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [versionId, contractId]);
+    return { approval: { id: approvalId, version_id: versionId, user_id: userId, vote, comment },
+      approval_count: approvalCount, rejection_count: rejectionCount, status, auto_merged: autoMerge };
+  });
+}
+
+router.post('/contracts/:contractId/versions/:versionId/approve', authenticateToken, async (req, res) => {
   const { vote, comment } = req.body;
-
-  if (!vote || !['approve', 'reject'].includes(vote)) {
-    return res.status(400).json({ error: 'Valid vote (approve/reject) required' });
+  if (!['approve', 'reject'].includes(vote) || (comment !== undefined && typeof comment !== 'string')) {
+    return res.status(400).json({ error: 'Valid vote and comment required' });
   }
-
-  // Verify contract access
-  db.get(
-    'SELECT * FROM contracts WHERE id = ? AND (created_by = ? OR id IN (SELECT contract_id FROM contract_members WHERE user_id = ?))',
-    [contractId, req.user.userId, req.user.userId],
-    (err, contract) => {
-      if (err || !contract) {
-        return res.status(404).json({ error: 'Contract not found' });
-      }
-
-      // Get user's weight for this contract and check if they're the creator
-      db.get(
-        'SELECT weight FROM contract_members WHERE contract_id = ? AND user_id = ?',
-        [contractId, req.user.userId],
-        (err, member) => {
-          if (err || !member) {
-            return res.status(403).json({ error: 'Not a member of this contract' });
-          }
-
-          // Check if the user is trying to vote on their own version
-          db.get(
-            'SELECT author_id FROM contract_versions WHERE id = ?',
-            [versionId],
-            (err, version) => {
-              if (err || !version) {
-                return res.status(404).json({ error: 'Version not found' });
-              }
-
-              // Prevent user from voting on their own changes
-              if (version.author_id === req.user.userId) {
-                return res.status(403).json({ error: 'Your changes are automatically approved. You cannot vote on your own changes.' });
-              }
-
-              const approvalId = uuidv4();
-              // Insert or update approval
-              db.run(
-            `INSERT INTO contract_approvals (id, version_id, user_id, vote, comment)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(version_id, user_id) DO UPDATE SET
-             vote = excluded.vote,
-             comment = excluded.comment,
-             created_at = CURRENT_TIMESTAMP`,
-            [approvalId, versionId, req.user.userId, vote, comment || null],
-            function(err) {
-              if (err) {
-                console.error('Error creating approval:', err);
-                return res.status(500).json({ error: 'Failed to submit approval' });
-              }
-
-              // Get total member count
-              db.get(
-                'SELECT COUNT(*) as total FROM contract_members WHERE contract_id = ?',
-                [contractId],
-                (err, memberCount) => {
-                  if (err) {
-                    return res.status(500).json({ error: 'Database error' });
-                  }
-
-                  const totalMembers = memberCount.total;
-
-                  // Recalculate approval score (simple count)
-                  db.all(
-                    `SELECT ca.vote
-                     FROM contract_approvals ca
-                     WHERE ca.version_id = ?`,
-                    [versionId],
-                    (err, approvals) => {
-                      if (err) {
-                        return res.status(500).json({ error: 'Database error' });
-                      }
-
-                      let approvalCount = 0;
-                      let rejectionCount = 0;
-
-                      approvals.forEach(approval => {
-                        if (approval.vote === 'approve') {
-                          approvalCount++;
-                        } else {
-                          rejectionCount++;
-                        }
-                      });
-
-                      // Determine status - requires at least 1 approval
-                      let newStatus = 'pending';
-                      if (approvalCount > 0) {
-                        newStatus = 'approved';
-                      } else if (rejectionCount > 0) {
-                        newStatus = 'rejected';
-                      }
-
-                      // Auto-merge if all members approved (100%)
-                      const shouldAutoMerge = approvalCount === totalMembers && approvalCount > 0;
-                      console.log('[APPROVE] Approval check - approvalCount:', approvalCount, 'totalMembers:', totalMembers, 'shouldAutoMerge:', shouldAutoMerge);
-
-                      // Update version status
-                      db.run(
-                        'UPDATE contract_versions SET approval_status = ?, approval_score = ? WHERE id = ?',
-                        [newStatus, approvalCount, versionId],
-                        function(err) {
-                          if (err) {
-                            return res.status(500).json({ error: 'Failed to update version status' });
-                          }
-
-                          // Auto-merge if 100% approval
-                          if (shouldAutoMerge) {
-                            console.log('[APPROVE] Auto-merging version due to 100% approval');
-                            db.get(
-                              'SELECT v.content, v.author_id, u.wallet_address as author_wallet FROM contract_versions v JOIN users u ON v.author_id = u.id WHERE v.id = ?',
-                              [versionId],
-                              async (err, version) => {
-                                if (err) {
-                                  console.error('[APPROVE] Error fetching version:', err);
-                                  return res.status(500).json({ error: 'Database error' });
-                                }
-
-                                console.log('[APPROVE] Version fetched, updating contract...');
-
-                                // Update contract's current version (NO content stored)
-                                db.run(
-                                  'UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                                  [versionId, contractId],
-                                  function(err) {
-                                    if (err) {
-                                      console.error('[APPROVE] Error updating contract:', err);
-                                      return res.status(500).json({ error: 'Failed to update contract' });
-                                    }
-
-                                    console.log('[APPROVE] Contract updated, marking as merged...');
-
-                                    // Mark version as merged
-                                    db.run(
-                                      'UPDATE contract_versions SET approval_status = ?, merged = 1 WHERE id = ?',
-                                      ['merged', versionId],
-                                      async function(err) {
-                                        if (err) {
-                                          console.error('[APPROVE] Error marking as merged:', err);
-                                          return res.status(500).json({ error: 'Failed to update version status' });
-                                        }
-
-                                        console.log('[APPROVE] Calling storeContractProof...');
-                                        // Store contract proof on-chain using IPFS
-                                        const proofResult = await storeContractProof(versionId, contractId);
-                                        console.log('[APPROVE] storeContractProof result:', proofResult);
-
-                                        res.json({
-                                          approval: {
-                                            id: approvalId,
-                                            version_id: versionId,
-                                            user_id: req.user.userId,
-                                            vote,
-                                            comment
-                                          },
-                                          approval_count: approvalCount,
-                                          rejection_count: rejectionCount,
-                                          status: 'merged',
-                                          auto_merged: true,
-                                          onchain_proof: {
-                                            ipfs_hash: proofResult.ipfsHash,
-                                            tx_hash: proofResult.txHash,
-                                            error: proofResult.error,
-                                            warning: proofResult.warning
-                                          }
-                                        });
-                                      }
-                                    );
-                                  }
-                                );
-                              }
-                            );
-                          } else {
-                            console.log('[APPROVE] Not auto-merging - returning approval response');
-                            res.json({
-                              approval: {
-                                id: approvalId,
-                                version_id: versionId,
-                                user_id: req.user.userId,
-                                vote,
-                                comment
-                              },
-                              approval_count: approvalCount,
-                              rejection_count: rejectionCount,
-                              status: newStatus
-                            });
-                          }
-                        }
-                      );
-                    }
-                  );
-                }
-              );
-            }
-          );
-          }
-        );
-      }
-    );
+  try {
+    const result = await recordVersionVote({ contractId: req.params.contractId, versionId: req.params.versionId,
+      userId: req.user.userId, vote, comment });
+    if (result.auto_merged) {
+      const proof = await storeContractProof(req.params.versionId, req.params.contractId);
+      result.onchain_proof = { ipfs_hash: proof.ipfsHash, tx_hash: proof.txHash, error: proof.error, warning: proof.warning };
+    }
+    res.json(result);
+  } catch (error) {
+    if (!error.status) console.error('[APPROVE] Failed:', error);
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to submit approval' });
   }
-);
 });
 
 // Get all approvals for a version
@@ -691,10 +455,11 @@ router.get('/contracts/:contractId/versions/:versionId/approvals', authenticateT
       db.all(
         `SELECT ca.*, u.name as user_name, u.email as user_email
          FROM contract_approvals ca
+         JOIN contract_versions v ON v.id = ca.version_id AND v.contract_id = ?
          JOIN users u ON ca.user_id = u.id
          WHERE ca.version_id = ?
          ORDER BY ca.created_at DESC`,
-        [versionId],
+        [contractId, versionId],
         (err, approvals) => {
           if (err) {
             return res.status(500).json({ error: 'Database error' });
@@ -702,12 +467,13 @@ router.get('/contracts/:contractId/versions/:versionId/approvals', authenticateT
 
           // Get version info
           db.get(
-            'SELECT approval_status, approval_score FROM contract_versions WHERE id = ?',
-            [versionId],
+            'SELECT approval_status, approval_score FROM contract_versions WHERE id = ? AND contract_id = ?',
+            [versionId, contractId],
             (err, version) => {
               if (err) {
                 return res.status(500).json({ error: 'Database error' });
               }
+              if (!version) return res.status(404).json({ error: 'Version not found' });
 
               res.json({
                 approvals,
@@ -723,70 +489,41 @@ router.get('/contracts/:contractId/versions/:versionId/approvals', authenticateT
   );
 });
 
-// Merge approved version into main contract
-router.post('/contracts/:contractId/versions/:versionId/merge', authenticateToken, (req, res) => {
-  const { contractId, versionId } = req.params;
-
-  // Verify contract access
-  db.get(
-    'SELECT * FROM contracts WHERE id = ? AND (created_by = ? OR id IN (SELECT contract_id FROM contract_members WHERE user_id = ?))',
-    [contractId, req.user.userId, req.user.userId],
-    (err, contract) => {
-      if (err || !contract) {
-        return res.status(404).json({ error: 'Contract not found' });
-      }
-
-      // Get version with author info
-      db.get(
-        'SELECT v.*, u.wallet_address as author_wallet FROM contract_versions v JOIN users u ON v.author_id = u.id WHERE v.id = ? AND v.contract_id = ?',
-        [versionId, contractId],
-        (err, version) => {
-          if (err || !version) {
-            return res.status(404).json({ error: 'Version not found' });
-          }
-
-          if (version.approval_status !== 'approved') {
-            return res.status(400).json({ error: 'Version must be approved before merging' });
-          }
-
-          // Update contract's current version (NO content stored)
-          db.run(
-            'UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [versionId, contractId],
-            function(err) {
-              if (err) {
-                return res.status(500).json({ error: 'Failed to update contract' });
-              }
-
-              // Mark version as merged
-              db.run(
-                'UPDATE contract_versions SET approval_status = ?, merged = 1 WHERE id = ?',
-                ['merged', versionId],
-                async function(err) {
-                  if (err) {
-                    return res.status(500).json({ error: 'Failed to update version status' });
-                  }
-
-                  // Store contract proof on-chain using IPFS
-                  const proofResult = await storeContractProof(versionId, contractId);
-
-                  res.json({ 
-                    message: 'Version merged successfully',
-                    onchain_proof: {
-                      ipfs_hash: proofResult.ipfsHash,
-                      tx_hash: proofResult.txHash,
-                      error: proofResult.error,
-                      warning: proofResult.warning
-                    }
-                  });
-                }
-              );
-            }
-          );
-        }
-      );
+export async function mergeVersion({ contractId, versionId, userId }) {
+  return withTransaction(async sql => {
+    const contract = await sql.get(`SELECT id, current_version FROM contracts WHERE id = ? AND
+      (created_by = ? OR EXISTS (SELECT 1 FROM contract_members WHERE contract_id = ? AND user_id = ?))`,
+    [contractId, userId, contractId, userId]);
+    if (!contract) throw httpError(404, 'Contract not found');
+    const version = await sql.get('SELECT approval_status, parent_version_id, merged FROM contract_versions WHERE id = ? AND contract_id = ?', [versionId, contractId]);
+    if (!version) throw httpError(404, 'Version not found');
+    if (version.merged) throw httpError(409, 'Version is already merged');
+    if (version.approval_status !== 'approved') throw httpError(409, 'Version requires approval');
+    if ((version.parent_version_id ?? null) !== (contract.current_version ?? null)) {
+      throw httpError(409, 'Parent version must be merged first');
     }
-  );
+    const members = await sql.all('SELECT DISTINCT user_id FROM contract_members WHERE contract_id = ?', [contractId]);
+    const approvals = await sql.all('SELECT user_id, vote FROM contract_approvals WHERE version_id = ?', [versionId]);
+    const votes = new Map(approvals.map(row => [row.user_id, row.vote]));
+    if (!members.length || !members.every(row => votes.get(row.user_id) === 'approve')) {
+      throw httpError(409, 'All current members must approve before merging');
+    }
+    await sql.run('UPDATE contract_versions SET approval_status = ?, merged = 1 WHERE id = ?', ['merged', versionId]);
+    await sql.run('UPDATE contracts SET current_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [versionId, contractId]);
+  });
+}
+
+router.post('/contracts/:contractId/versions/:versionId/merge', authenticateToken, async (req, res) => {
+  const { contractId, versionId } = req.params;
+  try {
+    await mergeVersion({ contractId, versionId, userId: req.user.userId });
+    const proof = await storeContractProof(versionId, contractId);
+    res.json({ message: 'Version merged successfully', onchain_proof: {
+      ipfs_hash: proof.ipfsHash, tx_hash: proof.txHash, error: proof.error, warning: proof.warning } });
+  } catch (error) {
+    if (!error.status) console.error('[MERGE] Failed:', error);
+    res.status(error.status || 500).json({ error: error.status ? error.message : 'Failed to merge version' });
+  }
 });
 
 // Add comment to a version
@@ -807,32 +544,42 @@ router.post('/contracts/:contractId/versions/:versionId/comments', authenticateT
         return res.status(404).json({ error: 'Contract not found' });
       }
 
-      const commentId = uuidv4();
-      db.run(
-        'INSERT INTO contract_comments (id, version_id, user_id, comment, parent_comment_id) VALUES (?, ?, ?, ?, ?)',
-        [commentId, versionId, req.user.userId, comment, parent_comment_id || null],
-        function(err) {
-          if (err) {
-            console.error('Error creating comment:', err);
-            return res.status(500).json({ error: 'Failed to add comment' });
-          }
-
-          // Return comment with user info
-          db.get(
-            `SELECT c.*, u.name as user_name, u.email as user_email
-             FROM contract_comments c
-             JOIN users u ON c.user_id = u.id
-             WHERE c.id = ?`,
-            [commentId],
-            (err, commentData) => {
-              if (err) {
-                return res.status(500).json({ error: 'Database error' });
-              }
-              res.json({ comment: commentData });
-            }
-          );
+      db.get('SELECT id FROM contract_versions WHERE id = ? AND contract_id = ?', [versionId, contractId], (versionError, version) => {
+        if (versionError) return res.status(500).json({ error: 'Database error' });
+        if (!version) return res.status(404).json({ error: 'Version not found' });
+        if (parent_comment_id) {
+          return db.get('SELECT id FROM contract_comments WHERE id = ? AND version_id = ?', [parent_comment_id, versionId], (parentError, parent) => {
+            if (parentError) return res.status(500).json({ error: 'Database error' });
+            if (!parent) return res.status(404).json({ error: 'Parent comment not found' });
+            insertComment();
+          });
         }
-      );
+        insertComment();
+      });
+      function insertComment() {
+        const commentId = uuidv4();
+        db.run(
+          'INSERT INTO contract_comments (id, version_id, user_id, comment, parent_comment_id) VALUES (?, ?, ?, ?, ?)',
+          [commentId, versionId, req.user.userId, comment, parent_comment_id || null],
+          function(err) {
+            if (err) {
+              console.error('Error creating comment:', err);
+              return res.status(500).json({ error: 'Failed to add comment' });
+            }
+            db.get(
+              `SELECT c.*, u.name as user_name, u.email as user_email
+               FROM contract_comments c
+               JOIN users u ON c.user_id = u.id
+               WHERE c.id = ?`,
+              [commentId],
+              (readError, commentData) => {
+                if (readError) return res.status(500).json({ error: 'Database error' });
+                res.json({ comment: commentData });
+              }
+            );
+          }
+        );
+      }
     }
   );
 });
@@ -850,13 +597,17 @@ router.get('/contracts/:contractId/versions/:versionId/comments', authenticateTo
         return res.status(404).json({ error: 'Contract not found' });
       }
 
+      db.get('SELECT id FROM contract_versions WHERE id = ? AND contract_id = ?', [versionId, contractId], (versionError, version) => {
+        if (versionError) return res.status(500).json({ error: 'Database error' });
+        if (!version) return res.status(404).json({ error: 'Version not found' });
       db.all(
         `SELECT c.*, u.name as user_name, u.email as user_email
          FROM contract_comments c
+         JOIN contract_versions v ON v.id = c.version_id AND v.contract_id = ?
          JOIN users u ON c.user_id = u.id
          WHERE c.version_id = ?
          ORDER BY c.created_at ASC`,
-        [versionId],
+        [contractId, versionId],
         (err, comments) => {
           if (err) {
             return res.status(500).json({ error: 'Database error' });
@@ -864,9 +615,9 @@ router.get('/contracts/:contractId/versions/:versionId/comments', authenticateTo
           res.json({ comments });
         }
       );
+      });
     }
   );
 });
 
 export default router;
-
