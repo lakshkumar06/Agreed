@@ -7,21 +7,30 @@ export function InviteMemberForm({ contractId, onInvite, onClose }) {
   const [weight, setWeight] = useState(0.5)
   const [invitationLink, setInvitationLink] = useState('')
   const [isSubmitted, setIsSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (submitting || (!email.trim() && !wallet_address.trim())) return
+    setSubmitting(true)
     try {
       const invitation = await onInvite(contractId, email, wallet_address, role_in_contract, weight)
       setInvitationLink(invitation.invitation_link)
       setIsSubmitted(true)
-    } catch (error) {
+    } catch {
       // Error handled in parent
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(invitationLink)
-    alert('Invitation link copied to clipboard!')
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(invitationLink)
+      alert('Invitation link copied to clipboard!')
+    } catch {
+      window.prompt('Copy invitation link:', invitationLink)
+    }
   }
 
   if (isSubmitted) {
@@ -51,7 +60,7 @@ export function InviteMemberForm({ contractId, onInvite, onClose }) {
               <p>Send this link to: <strong>{email || wallet_address}</strong></p>
               <p>Role: <strong>{role_in_contract}</strong> (Weight: {weight})</p>
               <p className="text-xs text-yellow-600 mt-2">
-                Note: Email sent in development mode. Check console for invitation details.
+                Share this link directly with the invitee.
               </p>
             </div>
             <button
@@ -69,7 +78,7 @@ export function InviteMemberForm({ contractId, onInvite, onClose }) {
   return (
     <div className="fixed inset-0 bg-[#292929a0] flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-lg p-6 w-full max-w-md">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Invite Member</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Create invitation</h3>
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
             <input
@@ -108,13 +117,15 @@ export function InviteMemberForm({ contractId, onInvite, onClose }) {
               className="w-full px-3 py-2 border border-gray-300 rounded-md"
               required
             />
+            {!email.trim() && !wallet_address.trim() && <p className="text-sm text-gray-600">Enter an email or wallet address.</p>}
           </div>
           <div className="flex space-x-3 mt-6">
             <button
               type="submit"
+              disabled={submitting || (!email.trim() && !wallet_address.trim())}
               className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md text-sm font-medium hover:bg-blue-700"
             >
-              Send Invitation
+              {submitting ? 'Creating...' : 'Create invitation link'}
             </button>
             <button
               type="button"
@@ -129,4 +140,3 @@ export function InviteMemberForm({ contractId, onInvite, onClose }) {
     </div>
   )
 }
-

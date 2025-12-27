@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export function MembersView({ contract, members, invitations, isCreator, onInvite, onCreateVersion }) {
+export function MembersView({ members, invitations, isCreator, onResend }) {
   const [activeTab, setActiveTab] = useState('members')
   
   // Filter out accepted invitations
@@ -80,6 +80,11 @@ export function MembersView({ contract, members, invitations, isCreator, onInvit
                       }`}>
                         {invitation.status}
                       </span>
+                      {invitation.status === 'pending' && (
+                        <button type="button" className="text-sm text-blue-700 underline" onClick={() => onResend(invitation.id)}>
+                          Get invitation link
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -91,4 +96,3 @@ export function MembersView({ contract, members, invitations, isCreator, onInvit
     </div>
   )
 }
-

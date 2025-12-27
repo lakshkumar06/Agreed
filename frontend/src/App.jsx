@@ -1,12 +1,7 @@
-import { useState, useEffect } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton, WalletDisconnectButton } from '@solana/wallet-adapter-react-ui'
 import axios from 'axios'
-import { ContractEditor } from './components/ContractEditor'
-import { CommitView } from './components/CommitView'
-import { DiffViewer } from './components/DiffViewer'
-import { VersionSidebar } from './components/VersionSidebar'
-import { HistoryPage } from './components/HistoryPage'
 import { VersionCompareModal } from './components/VersionCompareModal'
 import { WalletPrompt } from './components/WalletPrompt'
 import { Dashboard } from './components/Dashboard'
@@ -15,10 +10,10 @@ import { LoginForm } from './components/auth/LoginForm'
 import { EmailRegisterForm } from './components/auth/EmailRegisterForm'
 import { WalletRegisterForm } from './components/auth/WalletRegisterForm'
 import { InvitationPage } from './components/auth/InvitationPage'
-import { ContractDetailView } from './components/contracts/ContractDetailView'
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
+const ContractDetailView = lazy(() => import('./components/contracts/ContractDetailView').then(module => ({ default: module.ContractDetailView })))
 
 function App() {
   const { publicKey, connected, disconnect, signMessage } = useWallet()
@@ -26,7 +21,7 @@ function App() {
   const [contracts, setContracts] = useState([])
   const [loading, setLoading] = useState(true)
   const [showLogin, setShowLogin] = useState(false)
-  const [showRegister, setShowRegister] = useState(false)
+  const [dashboardError, setDashboardError] = useState('')
   const [showWalletRegister, setShowWalletRegister] = useState(false)
   const [showEmailRegister, setShowEmailRegister] = useState(false)
   const [showWalletPrompt, setShowWalletPrompt] = useState(false)
@@ -40,19 +35,22 @@ function App() {
   const [selectedVersion, setSelectedVersion] = useState(null)
   const [showCompareModal, setShowCompareModal] = useState(false)
   const [compareVersions, setCompareVersions] = useState([])
+  const walletAttempt = useRef(null)
+  const detailsRequest = useRef(0)
+  const sessionRequest = useRef(0)
 
   useEffect(() => {
-    // Check if this is an invitation link
+    const token = localStorage.getItem('token')
+    if (token) axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    else delete axios.defaults.headers.common['Authorization']
+
+    // Restore the session even when the user opens an invitation link.
     const path = window.location.pathname
     if (path.startsWith('/invite/')) {
-      const token = path.split('/invite/')[1]
-      loadInvitationData(token)
-      return
-    }
-
-    const token = localStorage.getItem('token')
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      const invitationToken = path.slice('/invite/'.length)
+      Promise.all([loadInvitationData(invitationToken), token ? loadDashboard() : Promise.resolve()])
+        .finally(() => setLoading(false))
+    } else if (token) {
       loadDashboard()
     } else {
       setLoading(false)
@@ -61,11 +59,19 @@ function App() {
 
   useEffect(() => {
     if (loading) return
+    if (!connected || !publicKey) {
+      walletAttempt.current = null
+      return
+    }
+    const address = publicKey.toBase58()
+    if (walletAttempt.current === address) return
     if (connected && publicKey && user && !user.wallet_address) {
+      walletAttempt.current = address
       // User is logged in but doesn't have wallet connected, update it
       updateUserWallet()
       setShowWalletPrompt(false)
     } else if (connected && publicKey && !user) {
+      walletAttempt.current = address
       // User not logged in, try wallet auth
       handleWalletAuth()
     }
@@ -94,16 +100,27 @@ function App() {
   }
 
   const loadDashboard = async () => {
+    const request = ++sessionRequest.current
     try {
+      setDashboardError('')
       const [userRes, contractsRes] = await Promise.all([
         axios.get(`${API_BASE}/auth/me`),
         axios.get(`${API_BASE}/contracts`)
       ])
+      if (request !== sessionRequest.current) return
       setUser(userRes.data.user)
-      setContracts(contractsRes.data.contracts)
+      setContracts(contractsRes.data.contracts || [])
     } catch (error) {
+      if (request !== sessionRequest.current) return
       console.error('Failed to load dashboard:', error)
-      localStorage.removeItem('token')
+      if (error.response?.status === 401) {
+        localStorage.removeItem('token')
+        delete axios.defaults.headers.common['Authorization']
+        setUser(null)
+        setContracts([])
+      } else {
+        setDashboardError('Could not load your dashboard. Check your connection and retry.')
+      }
     }
     setLoading(false)
   }
@@ -116,7 +133,7 @@ function App() {
       setUser(res.data.user)
       await loadDashboard()
       setShowLogin(false)
-    } catch (error) {
+    } catch {
       alert('Login failed')
     }
   }
@@ -128,13 +145,12 @@ function App() {
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
       setUser(res.data.user)
       setShowLogin(false)
-      setShowRegister(false)
       setShowEmailRegister(false)
       // After email registration, if wallet not connected, show wallet prompt
       if (!connected) {
         setShowWalletPrompt(true)
       }
-    } catch (error) {
+    } catch {
       alert('Registration failed')
     }
   }
@@ -148,7 +164,7 @@ function App() {
       setUser({ ...res.data.user, wallet_address: publicKey.toBase58() })
       setShowWalletRegister(false)
       await loadDashboard()
-    } catch (error) {
+    } catch {
       alert('Wallet registration failed')
     }
   }
@@ -163,9 +179,11 @@ function App() {
   }
 
   const createContract = async (title, description, fileContent) => {
+    let created = false
     try {
       // First create contract in database
       const res = await axios.post(`${API_BASE}/contracts`, { title, description })
+      created = true
       const contract = res.data.contract
       const contractId = contract.id
       
@@ -177,11 +195,17 @@ function App() {
       await loadDashboard()
     } catch (error) {
       console.error('Failed to create contract:', error);
-      alert('Failed to create contract')
+      if (created) {
+        await loadDashboard()
+        alert('Contract created, but file processing failed. You can open the contract and retry later.')
+        return
+      }
+      throw error
     }
   }
 
   const loadContractDetails = async (contractId) => {
+    const request = ++detailsRequest.current
     try {
       const [membersRes, invitationsRes, versionsRes, historyRes] = await Promise.all([
         axios.get(`${API_BASE}/contracts/${contractId}/members`),
@@ -189,14 +213,14 @@ function App() {
         axios.get(`${API_BASE}/contracts/${contractId}/versions`),
         axios.get(`${API_BASE}/contracts/${contractId}/history`)
       ])
-      console.log('Loaded members:', membersRes.data.members)
-      console.log('Loaded invitations:', invitationsRes.data.invitations)
+      if (request !== detailsRequest.current) return
       setContractMembers(membersRes.data.members || [])
       setContractInvitations(invitationsRes.data.invitations || [])
       setContractVersions(versionsRes.data.versions || [])
       setContractHistory(historyRes.data.history || [])
     } catch (error) {
       console.error('Failed to load contract details:', error)
+      if (request !== detailsRequest.current) return
       // Set empty arrays on error to prevent stale data
       setContractMembers([])
       setContractInvitations([])
@@ -224,7 +248,17 @@ function App() {
   const resendInvitation = async (invitationId) => {
     try {
       const res = await axios.post(`${API_BASE}/contracts/invite/${invitationId}/resend`)
-      alert('Invitation link resent!')
+      const link = res.data.invitation?.invitation_link
+      if (link && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(link)
+          alert('Invitation link copied to clipboard.')
+        } catch {
+          window.prompt('Copy invitation link:', link)
+        }
+      } else if (link) {
+        window.prompt('Copy invitation link:', link)
+      }
       await loadContractDetails(selectedContract.id)
       return res.data.invitation
     } catch (error) {
@@ -291,9 +325,14 @@ function App() {
   }
 
   const handleLogout = () => {
+    sessionRequest.current++
     localStorage.removeItem('token')
+    delete axios.defaults.headers.common['Authorization']
+    detailsRequest.current++
+    walletAttempt.current = publicKey?.toBase58() || null
     setUser(null)
     setContracts([])
+    setSelectedContract(null)
     if (connected) {
       disconnect()
     }
@@ -301,7 +340,7 @@ function App() {
 
   if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>
 
-  if (showInvitationPage) {
+  if (showInvitationPage && (user || (!showLogin && !showEmailRegister && !showWalletRegister))) {
     return (
       <InvitationPage 
         invitation={invitationData}
@@ -327,6 +366,11 @@ function App() {
           </div>
           
           <div className="space-y-4">
+            {dashboardError && (
+              <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+                {dashboardError} <button className="underline" onClick={loadDashboard}>Retry</button>
+              </p>
+            )}
             <WalletMultiButton className="w-full" />
             
             <div className="text-center text-sm text-gray-500">or</div>
@@ -390,11 +434,17 @@ function App() {
       </nav>
 
       <div className="">
+        {dashboardError && (
+          <div role="alert" className="mx-[5vw] md:mx-[10vw] pt-20 text-red-700">
+            {dashboardError} <button className="underline" onClick={loadDashboard}>Retry</button>
+          </div>
+        )}
         {showWalletPrompt ? (
           <WalletPrompt onSkip={() => setShowWalletPrompt(false)} />
         ) : selectedContract ? (
           <>
-            <ContractDetailView 
+            <Suspense fallback={<div className="pt-24 text-center text-gray-600">Loading contract...</div>}>
+            <ContractDetailView
               contract={selectedContract}
               members={contractMembers}
               invitations={contractInvitations}
@@ -403,6 +453,7 @@ function App() {
               history={contractHistory}
               selectedVersion={selectedVersion}
               onBack={() => {
+                detailsRequest.current++
                 setSelectedContract(null)
                 setSelectedVersion(null)
               }}
@@ -413,6 +464,7 @@ function App() {
               onSelectVersion={handleSelectVersion}
               onCompareVersions={handleCompareVersions}
             />
+            </Suspense>
             {showCompareModal && compareVersions.length === 2 && (
               <VersionCompareModal
                 contractId={selectedContract.id}
@@ -428,6 +480,11 @@ function App() {
             onCreateContract={createContract}
             onRefresh={loadDashboard}
             onSelectContract={(contract) => {
+              detailsRequest.current++
+              setContractMembers([])
+              setContractInvitations([])
+              setContractVersions([])
+              setContractHistory([])
               setSelectedContract(contract)
               loadContractDetails(contract.id)
             }}

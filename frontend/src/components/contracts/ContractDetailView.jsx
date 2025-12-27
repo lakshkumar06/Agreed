@@ -8,14 +8,13 @@ import { DeadlinesView } from './DeadlinesView'
 import { MilestonesView } from './MilestonesView'
 import { InviteMemberForm } from './InviteMemberForm'
 
-export function ContractDetailView({ contract, members, invitations, currentUserId, versions, history, selectedVersion, onBack, onInvite, onResend, onRefresh, onCreateVersion, onSelectVersion, onCompareVersions }) {
+export function ContractDetailView({ contract, members, invitations, currentUserId, versions, history, selectedVersion, onBack, onInvite, onResend, onRefresh, onCreateVersion, onSelectVersion }) {
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [sidebarMode, setSidebarMode] = useState('home') // 'home', 'members', 'approvalRequests', 'versionHistory', 'deadlines', 'milestones'
   const [contentMode, setContentMode] = useState('editor') // 'editor', 'commit'
   const [contractViewMode, setContractViewMode] = useState('raw') // 'raw', 'clauses', 'chat'
   
   const isCreator = currentUserId === contract.created_by
-  const currentContent = selectedVersion ? selectedVersion.content : contract.content || ''
   
   const handleVersionSelect = (version) => {
     onSelectVersion(version)
@@ -152,7 +151,7 @@ export function ContractDetailView({ contract, members, invitations, currentUser
                 isCreator={isCreator}
                 totalMembers={members.length}
                 onBack={() => {
-                  setSelectedVersion(null)
+                  onSelectVersion(null)
                   setContentMode('editor')
                 }}
               />
@@ -174,6 +173,7 @@ export function ContractDetailView({ contract, members, invitations, currentUser
                 invitations={invitations}
                 isCreator={isCreator}
                 onInvite={() => setShowInviteForm(true)}
+                onResend={onResend}
                 onCreateVersion={onCreateVersion}
               />
             ) : sidebarMode === 'approvalRequests' ? (
@@ -276,4 +276,3 @@ export function ContractDetailView({ contract, members, invitations, currentUser
     </div>
   )
 }
-

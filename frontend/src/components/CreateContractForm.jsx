@@ -5,6 +5,7 @@ export function CreateContractForm({ onCreate, onClose }) {
   const [description, setDescription] = useState('')
   const [file, setFile] = useState(null)
   const [processing, setProcessing] = useState(false)
+  const [error, setError] = useState('')
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0])
@@ -13,6 +14,7 @@ export function CreateContractForm({ onCreate, onClose }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setProcessing(true)
+    setError('')
     
     try {
       let fileContent = ''
@@ -22,8 +24,8 @@ export function CreateContractForm({ onCreate, onClose }) {
       
       await onCreate(title, description, fileContent)
       onClose()
-    } catch (error) {
-      alert('Failed to create contract')
+    } catch {
+      setError('Failed to create contract. Your entries are still here; please retry.')
     } finally {
       setProcessing(false)
     }
@@ -34,6 +36,7 @@ export function CreateContractForm({ onCreate, onClose }) {
       <div className="bg-white rounded-lg p-6 w-full max-w-md">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Create Contract</h3>
         <form onSubmit={handleSubmit}>
+          {error && <p role="alert" className="mb-3 text-sm text-red-700">{error}</p>}
           <div className="space-y-4">
             <input
               type="text"
@@ -69,7 +72,7 @@ export function CreateContractForm({ onCreate, onClose }) {
           <div className="flex space-x-3 mt-6">
             <button
               type="submit"
-              disabled={processing}
+              disabled={processing || !title.trim()}
               className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
             >
               {processing ? 'Processing...' : 'Create'}
@@ -87,4 +90,3 @@ export function CreateContractForm({ onCreate, onClose }) {
     </div>
   )
 }
-
