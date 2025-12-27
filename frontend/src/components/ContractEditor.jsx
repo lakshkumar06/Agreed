@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export function ContractEditor({ contractId, initialContent, onSave, currentUser }) {
+export function ContractEditor({ initialContent, onSave, readOnly = false }) {
   const [content, setContent] = useState(initialContent || '');
   const [commitMessage, setCommitMessage] = useState('');
   const [saving, setSaving] = useState(false);
@@ -19,6 +19,7 @@ export function ContractEditor({ contractId, initialContent, onSave, currentUser
   };
 
   const handleSave = async () => {
+    if (readOnly || saving) return;
     if (!commitMessage.trim()) {
       alert('Please enter a commit message');
       return;
@@ -44,6 +45,7 @@ export function ContractEditor({ contractId, initialContent, onSave, currentUser
         <textarea
           value={content}
           onChange={handleContentChange}
+          readOnly={readOnly}
           className="w-full h-64 px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
           placeholder="Enter contract content here..."
         />
@@ -59,7 +61,7 @@ export function ContractEditor({ contractId, initialContent, onSave, currentUser
               />
               <button
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || readOnly}
                 className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Commit Changes'}
@@ -77,7 +79,7 @@ export function ContractEditor({ contractId, initialContent, onSave, currentUser
           ) : (
             <button
               onClick={() => setShowCommitForm(true)}
-              disabled={!hasChanges}
+              disabled={!hasChanges || readOnly}
               className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save Draft
@@ -88,4 +90,3 @@ export function ContractEditor({ contractId, initialContent, onSave, currentUser
     </div>
   );
 }
-

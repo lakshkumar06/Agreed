@@ -9,40 +9,37 @@ export function ChatbotView({ contractId }) {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    loadChatHistory()
+    let active = true
+    axios.get(`${API_BASE}/contracts/${contractId}/chat`).then(res => {
+      if (!active) return
+      setMessages((res.data.history || []).flatMap(msg => [
+        { role: 'user', content: msg.question },
+        { role: 'assistant', content: msg.answer }
+      ]))
+    }).catch(error => {
+      if (active) console.error('Error loading chat history:', error)
+    })
+    return () => { active = false }
   }, [contractId])
-
-  const loadChatHistory = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/contracts/${contractId}/chat`)
-      const history = res.data.history.map(msg => ({
-        role: 'user',
-        content: msg.question
-      })).concat(res.data.history.map(msg => ({
-        role: 'assistant',
-        content: msg.answer
-      })))
-      setMessages(history)
-    } catch (error) {
-      console.error('Error loading chat history:', error)
-    }
-  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!question.trim()) return
 
     setLoading(true)
-    const userMessage = { role: 'user', content: question }
+    const submittedQuestion = question.trim()
+    const userMessage = { role: 'user', content: submittedQuestion }
     setMessages(prev => [...prev, userMessage])
     setQuestion('')
 
     try {
-      const res = await axios.post(`${API_BASE}/contracts/${contractId}/chat`, { question })
+      const res = await axios.post(`${API_BASE}/contracts/${contractId}/chat`, { question: submittedQuestion })
       const assistantMessage = { role: 'assistant', content: res.data.answer }
       setMessages(prev => [...prev, assistantMessage])
     } catch (error) {
       console.error('Error sending message:', error)
+      setMessages(prev => prev.filter(msg => msg !== userMessage))
+      setQuestion(submittedQuestion)
       alert('Failed to send message')
     } finally {
       setLoading(false)
@@ -100,4 +97,3 @@ export function ChatbotView({ contractId }) {
     </div>
   )
 }
-

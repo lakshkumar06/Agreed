@@ -6,53 +6,45 @@ import { ChatbotView } from './ChatbotView'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
 
-export function ContractView({ contractId, contract, contractViewMode, setContractViewMode, onCreateVersion, currentUserId, versions, history }) {
+export function ContractView({ contractId, contractViewMode, setContractViewMode, onCreateVersion, history }) {
   const [displayContent, setDisplayContent] = useState('')
   const [contentSource, setContentSource] = useState('loading') // 'ipfs', 'loading', 'error'
   const [ipfsHash, setIpfsHash] = useState(null)
 
-  // Load content from IPFS if available
+  const latestVersion = history?.[0]
+  const latestVersionId = latestVersion?.id
+  const latestHash = latestVersion?.ipfs_hash
+
   useEffect(() => {
+    let active = true
     const loadContent = async () => {
-      // Always try to show the last merged version from history first
-      if (history && history.length > 0) {
-        const latestVersion = history[0]
-        
-        if (latestVersion.ipfs_hash) {
-          setIpfsHash(latestVersion.ipfs_hash)
+      setDisplayContent('')
+      setIpfsHash(latestHash || null)
+      if (latestVersionId) {
+        if (latestHash) {
           setContentSource('loading')
           
           try {
-            const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${latestVersion.id}/ipfs`, {
-              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-            })
+            const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${latestVersionId}/ipfs`)
+            if (!active) return
             setDisplayContent(res.data.content)
             setContentSource(res.data.source)
           } catch (error) {
+            if (!active) return
             console.error('[IPFS] Error loading content from IPFS:', error)
-            // No fallback - this is Web3!
-            setDisplayContent('Content unavailable: Failed to load from IPFS')
             setContentSource('error')
           }
         } else {
-          // No IPFS hash - this shouldn't happen in Web3 mode
-          setDisplayContent('Content unavailable: No IPFS hash')
           setContentSource('error')
         }
       } else {
-        // No versions or IPFS hash available
-        setDisplayContent('Content unavailable: No IPFS hash found')
-        setContentSource('error')
+        setContentSource('empty')
       }
     }
 
     loadContent()
-  }, [contractId, contract, versions, history])
-  
-  // Determine the content to show in raw view (for backwards compatibility)
-  const getContentToShow = () => {
-    return displayContent
-  }
+    return () => { active = false }
+  }, [contractId, latestVersionId, latestHash])
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-full">
@@ -132,11 +124,12 @@ export function ContractView({ contractId, contract, contractViewMode, setContra
                 )}
               </div>
             )}
+          {contentSource === 'error' && <p role="alert" className="px-6 text-sm text-red-700">Contract content is unavailable. Editing is paused to prevent overwriting it.</p>}
           <ContractEditor
             contractId={contractId}
-            initialContent={getContentToShow()}
+            initialContent={displayContent}
             onSave={onCreateVersion}
-            currentUser={currentUserId}
+            readOnly={contentSource === 'loading' || contentSource === 'error'}
           />
           </>
         ) : contractViewMode === 'clauses' ? (
@@ -148,4 +141,3 @@ export function ContractView({ contractId, contract, contractViewMode, setContra
     </div>
   )
 }
-

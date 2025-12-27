@@ -9,19 +9,24 @@ export function VersionCompareModal({ contractId, version1, version2, onClose })
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setDiff(null);
     const fetchDiff = async () => {
       try {
         const res = await axios.get(`${API_BASE}/contracts/${contractId}/diff`, {
           params: { from: version1.id, to: version2.id }
         });
-        setDiff(res.data.diff);
+        if (active) setDiff(res.data.diff);
       } catch (error) {
         console.error('Error fetching diff:', error);
+        if (active) setDiff({ error: 'Could not load the version comparison.' });
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
     fetchDiff();
+    return () => { active = false; };
   }, [contractId, version1.id, version2.id]);
 
   return (
@@ -39,6 +44,8 @@ export function VersionCompareModal({ contractId, version1, version2, onClose })
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
           {loading ? (
             <p className="text-gray-500 text-center py-4">Loading diff...</p>
+          ) : diff?.error ? (
+            <p role="alert" className="text-red-700 text-center py-4">{diff.error}</p>
           ) : (
             <DiffViewer diff={diff} fromVersion={version1} toVersion={version2} />
           )}
@@ -47,4 +54,3 @@ export function VersionCompareModal({ contractId, version1, version2, onClose })
     </div>
   );
 }
-
