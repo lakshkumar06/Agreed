@@ -1,4 +1,4 @@
-export function VersionHistoryView({ contractId, history, onSelectVersion }) {
+export function VersionHistoryView({ history, onSelectVersion }) {
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-6">
@@ -68,4 +68,3 @@ export function VersionHistoryView({ contractId, history, onSelectVersion }) {
     </div>
   )
 }
-

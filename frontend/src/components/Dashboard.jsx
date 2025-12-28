@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { CreateContractForm } from './CreateContractForm'
 
-export function Dashboard({ contracts, onCreateContract, onRefresh, onSelectContract }) {
+export function Dashboard({ contracts, onCreateContract, onSelectContract }) {
   const [showCreateContract, setShowCreateContract] = useState(false)
 
   return (
@@ -79,4 +79,3 @@ export function Dashboard({ contracts, onCreateContract, onRefresh, onSelectCont
     </div>
   )
 }
-

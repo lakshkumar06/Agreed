@@ -1,4 +1,4 @@
-export function HistoryPage({ contractId, history }) {
+export function HistoryPage({ history }) {
   return (
     <div className="bg-white shadow rounded-lg">
       <div className="px-6 py-4 border-b border-gray-200">
@@ -10,7 +10,7 @@ export function HistoryPage({ contractId, history }) {
           <p className="text-gray-500 text-center py-4">No history yet</p>
         ) : (
           <div className="space-y-4">
-            {history.map((commit, idx) => (
+            {history.map((commit) => (
               <div key={commit.id} className="border-l-4 border-green-500 pl-4">
                 <div className="flex items-center space-x-2">
                   <span className="text-sm font-medium text-gray-900">
@@ -37,4 +37,3 @@ export function HistoryPage({ contractId, history }) {
     </div>
   );
 }
-

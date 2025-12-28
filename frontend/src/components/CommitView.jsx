@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { ApprovalProgressBar } from './ApprovalProgressBar';
 import { CommentThread } from './CommentThread';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
-export function CommitView({ contractId, version, currentUserId, onRefresh, isCreator = false, totalMembers = 0, onBack }) {
+export function CommitView({ contractId, version, currentUserId, onRefresh, totalMembers = 0, onBack }) {
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [userVote, setUserVote] = useState(null);
@@ -13,29 +13,19 @@ export function CommitView({ contractId, version, currentUserId, onRefresh, isCr
   const [submitting, setSubmitting] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [diff, setDiff] = useState(null);
-  const [parentVersion, setParentVersion] = useState(null);
   const [approvalCount, setApprovalCount] = useState(0);
-  const [rejectionCount, setRejectionCount] = useState(0);
   const [versionStatus, setVersionStatus] = useState(version.approval_status || 'pending');
   
   // Check if current user is the version author (the person who made the changes)
   const isVersionAuthor = version.author_id === currentUserId;
 
-  useEffect(() => {
-    loadApprovals();
-    if (version?.parent_version_id) {
-      loadParentVersion();
-    }
-  }, [version?.id]);
-
-  const loadApprovals = async () => {
+  const loadApprovals = useCallback(async () => {
     if (!version?.id) return;
     
     try {
       const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${version.id}/approvals`);
       setApprovals(res.data.approvals);
       setApprovalCount(res.data.approval_count || 0);
-      setRejectionCount(res.data.rejection_count || 0);
       setVersionStatus(res.data.status || 'pending');
       
       // Check if current user has voted
@@ -48,16 +38,11 @@ export function CommitView({ contractId, version, currentUserId, onRefresh, isCr
     } finally {
       setLoading(false);
     }
-  };
+  }, [contractId, version?.id, currentUserId]);
 
-  const loadParentVersion = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${version.parent_version_id}`);
-      setParentVersion(res.data.version);
-    } catch (error) {
-      console.error('Error loading parent version:', error);
-    }
-  };
+  useEffect(() => {
+    loadApprovals();
+  }, [loadApprovals]);
 
   const loadDiff = async () => {
     if (!version?.parent_version_id) return;
@@ -269,4 +254,3 @@ export function CommitView({ contractId, version, currentUserId, onRefresh, isCr
     </div>
   );
 }
-

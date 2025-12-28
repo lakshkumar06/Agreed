@@ -3,7 +3,7 @@ import axios from 'axios'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
 
-export function ApprovalRequestsView({ contractId, versions, onSelectVersion, currentUserId, isCreator }) {
+export function ApprovalRequestsView({ contractId, versions, onSelectVersion }) {
   const [approvals, setApprovals] = useState({});
   const [loading, setLoading] = useState(true);
 
@@ -80,4 +80,3 @@ export function ApprovalRequestsView({ contractId, versions, onSelectVersion, cu
     </div>
   )
 }
-
