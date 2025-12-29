@@ -35,9 +35,16 @@ pub mod agreed_contracts {
             ErrorCode::TooManyParticipants
         );
         require!(
+            required_approvals > 0 &&
             required_approvals as usize <= participants.len(),
             ErrorCode::InvalidApprovalThreshold
         );
+        for (index, participant) in participants.iter().enumerate() {
+            require!(
+                !participants[..index].contains(participant),
+                ErrorCode::DuplicateParticipant
+            );
+        }
         require!(
             participants.contains(&ctx.accounts.creator.key()),
             ErrorCode::CreatorMustBeParticipant
@@ -108,6 +115,10 @@ pub mod agreed_contracts {
             contract.status == ContractStatus::Completed,
             ErrorCode::ContractNotCompleted
         );
+        require!(
+            contract.participants.contains(&ctx.accounts.participant.key()),
+            ErrorCode::NotAParticipant
+        );
 
         // Update participant's completion count
         let participant_rep = &mut ctx.accounts.participant_reputation;
@@ -145,6 +156,11 @@ pub mod agreed_contracts {
         let updater = ctx.accounts.updater.key();
 
         require!(
+            contract.status == ContractStatus::Active,
+            ErrorCode::ContractNotActive
+        );
+
+        require!(
             contract.participants.contains(&updater),
             ErrorCode::NotAParticipant
         );
@@ -172,6 +188,10 @@ pub mod agreed_contracts {
         );
         
         let contract = &ctx.accounts.contract;
+        require!(
+            contract.contract_id == contract_id,
+            ErrorCode::InvalidMilestoneContract
+        );
         require!(
             contract.status == ContractStatus::Active,
             ErrorCode::ContractNotActive
@@ -203,6 +223,7 @@ pub mod agreed_contracts {
         let escrow = &mut ctx.accounts.escrow_milestone;
         escrow.milestone_id = milestone_id;
         escrow.contract_id = contract_id;
+        escrow.contract = ctx.accounts.contract.key();
         escrow.description = description;
         escrow.amount = amount;
         escrow.recipient = recipient;
@@ -428,8 +449,19 @@ pub struct MarkContractComplete<'info> {
     )]
     pub participant_reputation: Account<'info, UserReputation>,
     
-    /// CHECK: We verify they're in contract.participants
-    pub participant: AccountInfo<'info>,
+    #[account(
+        init,
+        payer = participant,
+        space = 8,
+        seeds = [b"completion", contract.key().as_ref(), participant.key().as_ref()],
+        bump
+    )]
+    pub completion_marker: Account<'info, CompletionMarker>,
+
+    #[account(mut)]
+    pub participant: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -465,7 +497,7 @@ pub struct InitializeEscrowMilestone<'info> {
         init,
         payer = creator,
         space = EscrowMilestone::LEN,
-        seeds = [b"escrow", contract_id.to_le_bytes().as_ref(), milestone_id.to_le_bytes().as_ref()],
+        seeds = [b"escrow", contract.key().as_ref(), milestone_id.to_le_bytes().as_ref()],
         bump
     )]
     pub escrow_milestone: Account<'info, EscrowMilestone>,
@@ -493,14 +525,17 @@ pub struct InitializeEscrowMilestone<'info> {
 pub struct MarkMilestoneComplete<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", escrow_milestone.contract_id.to_le_bytes().as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
+        seeds = [b"escrow", escrow_milestone.contract.as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
         bump = escrow_milestone.bump
     )]
     pub escrow_milestone: Account<'info, EscrowMilestone>,
 
     #[account(
         seeds = [b"contract", contract.contract_id.to_le_bytes().as_ref(), contract.creator.key().as_ref()],
-        bump = contract.bump
+        bump = contract.bump,
+        constraint = escrow_milestone.contract_id == contract.contract_id @ ErrorCode::InvalidMilestoneContract,
+        constraint = escrow_milestone.contract == contract.key() @ ErrorCode::InvalidMilestoneContract,
+        constraint = escrow_milestone.creator == contract.creator @ ErrorCode::InvalidMilestoneContract
     )]
     pub contract: Account<'info, Contract>,
 
@@ -511,14 +546,17 @@ pub struct MarkMilestoneComplete<'info> {
 pub struct ApproveMilestoneRelease<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", escrow_milestone.contract_id.to_le_bytes().as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
+        seeds = [b"escrow", escrow_milestone.contract.as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
         bump = escrow_milestone.bump
     )]
     pub escrow_milestone: Account<'info, EscrowMilestone>,
 
     #[account(
         seeds = [b"contract", contract.contract_id.to_le_bytes().as_ref(), contract.creator.key().as_ref()],
-        bump = contract.bump
+        bump = contract.bump,
+        constraint = escrow_milestone.contract_id == contract.contract_id @ ErrorCode::InvalidMilestoneContract,
+        constraint = escrow_milestone.contract == contract.key() @ ErrorCode::InvalidMilestoneContract,
+        constraint = escrow_milestone.creator == contract.creator @ ErrorCode::InvalidMilestoneContract
     )]
     pub contract: Account<'info, Contract>,
 
@@ -536,13 +574,13 @@ pub struct ApproveMilestoneRelease<'info> {
 pub struct ReleaseEscrowFunds<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", escrow_milestone.contract_id.to_le_bytes().as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
+        seeds = [b"escrow", escrow_milestone.contract.as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
         bump = escrow_milestone.bump
     )]
     pub escrow_milestone: Account<'info, EscrowMilestone>,
 
-    /// CHECK: Verified via escrow_milestone.recipient
-    #[account(mut)]
+    /// CHECK: Address is constrained to the recipient recorded when the escrow was funded.
+    #[account(mut, constraint = recipient.key() == escrow_milestone.recipient @ ErrorCode::InvalidEscrowRecipient)]
     pub recipient: AccountInfo<'info>,
 }
 
@@ -550,7 +588,7 @@ pub struct ReleaseEscrowFunds<'info> {
 pub struct CancelEscrowMilestone<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", escrow_milestone.contract_id.to_le_bytes().as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
+        seeds = [b"escrow", escrow_milestone.contract.as_ref(), escrow_milestone.milestone_id.to_le_bytes().as_ref()],
         bump = escrow_milestone.bump
     )]
     pub escrow_milestone: Account<'info, EscrowMilestone>,
@@ -600,6 +638,9 @@ pub struct UserReputation {
     pub bump: u8,
 }
 
+#[account]
+pub struct CompletionMarker {}
+
 impl UserReputation {
     pub const LEN: usize = 8 + // discriminator
         32 + // wallet
@@ -616,6 +657,7 @@ impl UserReputation {
 pub struct EscrowMilestone {
     pub milestone_id: u64,
     pub contract_id: u64,
+    pub contract: Pubkey,
     pub description: String,
     pub amount: u64,
     pub recipient: Pubkey,
@@ -634,6 +676,7 @@ impl EscrowMilestone {
     pub const LEN: usize = 8 + // discriminator
         8 + // milestone_id
         8 + // contract_id
+        32 + // contract account
         (4 + 200) + // description (max 200 chars)
         8 + // amount
         32 + // recipient
@@ -669,6 +712,8 @@ pub enum ErrorCode {
     TooManyParticipants,
     #[msg("Invalid approval threshold")]
     InvalidApprovalThreshold,
+    #[msg("Participants must be unique")]
+    DuplicateParticipant,
     #[msg("Creator must be a participant")]
     CreatorMustBeParticipant,
     #[msg("Contract is not active")]
@@ -691,6 +736,10 @@ pub enum ErrorCode {
     RecipientNotParticipant,
     #[msg("Invalid amount")]
     InvalidAmount,
+    #[msg("Escrow milestone does not belong to this contract")]
+    InvalidMilestoneContract,
+    #[msg("Recipient does not match funded escrow milestone")]
+    InvalidEscrowRecipient,
     #[msg("Milestone is not funded")]
     MilestoneNotFunded,
     #[msg("Milestone not marked complete")]
@@ -706,4 +755,3 @@ pub enum ErrorCode {
     #[msg("IPFS hash too long (max 46 characters)")]
     IpfsHashTooLong,
 }
-

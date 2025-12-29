@@ -116,7 +116,7 @@
               },
               {
                 "kind": "account",
-                "path": "escrow_milestone.contract_id",
+                "path": "escrow_milestone.contract",
                 "account": "EscrowMilestone"
               },
               {
@@ -273,7 +273,7 @@
               },
               {
                 "kind": "account",
-                "path": "escrow_milestone.contract_id",
+                "path": "escrow_milestone.contract",
                 "account": "EscrowMilestone"
               },
               {
@@ -418,8 +418,8 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "contract_id"
+                "kind": "account",
+                "path": "contract"
               },
               {
                 "kind": "arg",
@@ -645,7 +645,44 @@
           }
         },
         {
-          "name": "participant"
+          "name": "completion_marker",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  109,
+                  112,
+                  108,
+                  101,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "contract"
+              },
+              {
+                "kind": "account",
+                "path": "participant"
+              }
+            ]
+          }
+        },
+        {
+          "name": "participant",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -681,7 +718,7 @@
               },
               {
                 "kind": "account",
-                "path": "escrow_milestone.contract_id",
+                "path": "escrow_milestone.contract",
                 "account": "EscrowMilestone"
               },
               {
@@ -760,7 +797,7 @@
               },
               {
                 "kind": "account",
-                "path": "escrow_milestone.contract_id",
+                "path": "escrow_milestone.contract",
                 "account": "EscrowMilestone"
               },
               {
@@ -837,6 +874,19 @@
   ],
   "accounts": [
     {
+      "name": "CompletionMarker",
+      "discriminator": [
+        198,
+        185,
+        74,
+        138,
+        135,
+        104,
+        93,
+        70
+      ]
+    },
+    {
       "name": "Contract",
       "discriminator": [
         172,
@@ -889,96 +939,118 @@
     },
     {
       "code": 6002,
+      "name": "DuplicateParticipant",
+      "msg": "Participants must be unique"
+    },
+    {
+      "code": 6003,
       "name": "CreatorMustBeParticipant",
       "msg": "Creator must be a participant"
     },
     {
-      "code": 6003,
+      "code": 6004,
       "name": "ContractNotActive",
       "msg": "Contract is not active"
     },
     {
-      "code": 6004,
+      "code": 6005,
       "name": "NotAParticipant",
       "msg": "You are not a participant"
     },
     {
-      "code": 6005,
+      "code": 6006,
       "name": "AlreadyApproved",
       "msg": "You have already approved this contract"
     },
     {
-      "code": 6006,
+      "code": 6007,
       "name": "OnlyCreatorCanCancel",
       "msg": "Only creator can cancel the contract"
     },
     {
-      "code": 6007,
+      "code": 6008,
       "name": "ContractNotCompleted",
       "msg": "Contract is not completed yet"
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "ReputationAlreadyExists",
       "msg": "Reputation account already exists"
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "DescriptionTooLong",
       "msg": "Description too long (max 200 characters)"
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "OnlyCreatorCanInitializeEscrow",
       "msg": "Only creator can initialize escrow"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "RecipientNotParticipant",
       "msg": "Recipient must be a participant"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "InvalidAmount",
       "msg": "Invalid amount"
     },
     {
-      "code": 6013,
+      "code": 6014,
+      "name": "InvalidMilestoneContract",
+      "msg": "Escrow milestone does not belong to this contract"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidEscrowRecipient",
+      "msg": "Recipient does not match funded escrow milestone"
+    },
+    {
+      "code": 6016,
       "name": "MilestoneNotFunded",
       "msg": "Milestone is not funded"
     },
     {
-      "code": 6014,
+      "code": 6017,
       "name": "MilestoneNotMarkedComplete",
       "msg": "Milestone not marked complete"
     },
     {
-      "code": 6015,
+      "code": 6018,
       "name": "AlreadyApprovedMilestone",
       "msg": "Already approved this milestone"
     },
     {
-      "code": 6016,
+      "code": 6019,
       "name": "InsufficientApprovals",
       "msg": "Insufficient approvals to release funds"
     },
     {
-      "code": 6017,
+      "code": 6020,
       "name": "OnlyCreatorCanCancelEscrow",
       "msg": "Only creator can cancel escrow"
     },
     {
-      "code": 6018,
+      "code": 6021,
       "name": "CannotCancelMilestone",
       "msg": "Cannot cancel milestone in current status"
     },
     {
-      "code": 6019,
+      "code": 6022,
       "name": "IpfsHashTooLong",
       "msg": "IPFS hash too long (max 46 characters)"
     }
   ],
   "types": [
+    {
+      "name": "CompletionMarker",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
     {
       "name": "Contract",
       "type": {
@@ -1064,6 +1136,10 @@
           {
             "name": "contract_id",
             "type": "u64"
+          },
+          {
+            "name": "contract",
+            "type": "pubkey"
           },
           {
             "name": "description",
