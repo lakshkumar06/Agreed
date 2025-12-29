@@ -10,11 +10,10 @@ import {
   cancelEscrowMilestone,
   fetchContractEscrowMilestones,
 } from '../../solana/escrow'
-import { initializeContract } from '../../solana/client'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api'
 
-export function MilestonesView({ contractId, contract, currentUser, isCreator }) {
+export function MilestonesView({ contractId, contract, isCreator }) {
   const wallet = useWallet()
   const [suggestions, setSuggestions] = useState([])
   const [onChainMilestones, setOnChainMilestones] = useState([])
@@ -34,8 +33,8 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
       setSuggestions(suggestionsRes.data.milestones || [])
 
       // Load on-chain escrow milestones if contract has Solana contract ID
-      if (contract?.solana_contract_id) {
-        const chainMilestones = await fetchContractEscrowMilestones(contract.solana_contract_id.toString())
+      if (contract?.solana_contract_pda) {
+        const chainMilestones = await fetchContractEscrowMilestones(contract.solana_contract_pda)
         setOnChainMilestones(chainMilestones)
       }
     } catch (error) {
@@ -96,7 +95,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
           try {
             const memberPubkey = new PublicKey(member.wallet_address)
             participantAddresses.push(memberPubkey)
-          } catch (e) {
+          } catch {
             console.warn(`Invalid wallet address for member: ${member.name}`)
           }
         }
@@ -213,7 +212,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
       // Validate recipient is a valid Solana address
       try {
         new PublicKey(recipientAddress)
-      } catch (e) {
+      } catch {
         alert('Invalid Solana wallet address')
         return
       }
@@ -240,7 +239,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
       const contractCreator = onChainContract.creator
 
       // Refresh on-chain milestones to get the latest count
-      const latestMilestones = await fetchContractEscrowMilestones(contract.solana_contract_id.toString())
+      const latestMilestones = await fetchContractEscrowMilestones(contract.solana_contract_pda)
       
       // Get next milestone ID (use timestamp to ensure uniqueness)
       const milestoneId = Date.now()
@@ -343,7 +342,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
       await loadMilestones()
       
       // Check if we can auto-release
-      const updatedMilestones = await fetchContractEscrowMilestones(contract.solana_contract_id.toString())
+      const updatedMilestones = await fetchContractEscrowMilestones(contract.solana_contract_pda)
       const updatedMilestone = updatedMilestones.find(m => m.milestoneId.eq(milestone.milestoneId))
       
       if (updatedMilestone && updatedMilestone.approvals.length >= updatedMilestone.approvalsRequired) {
@@ -395,7 +394,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
       await loadMilestones()
       
       // Auto-release if threshold met
-      const updatedMilestones = await fetchContractEscrowMilestones(contract.solana_contract_id.toString())
+      const updatedMilestones = await fetchContractEscrowMilestones(contract.solana_contract_pda)
       const updatedMilestone = updatedMilestones.find(m => m.milestoneId.eq(milestone.milestoneId))
       
       if (updatedMilestone && updatedMilestone.approvals.length >= updatedMilestone.approvalsRequired) {
@@ -419,7 +418,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
     try {
       const signature = await releaseEscrowFunds(
         wallet,
-        contract.solana_contract_id.toString(),
+        contract.solana_contract_pda,
         milestone.milestoneId.toNumber(),
         milestone.recipient.toBase58()
       )
@@ -443,7 +442,7 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
     try {
       const signature = await cancelEscrowMilestone(
         wallet,
-        contract.solana_contract_id.toString(),
+        contract.solana_contract_pda,
         milestone.milestoneId.toNumber()
       )
 
@@ -714,4 +713,3 @@ export function MilestonesView({ contractId, contract, currentUser, isCreator })
     </div>
   )
 }
-

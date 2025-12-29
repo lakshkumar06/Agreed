@@ -23,20 +23,11 @@ export interface EscrowMilestoneData {
 }
 
 // Derive escrow milestone PDA
-export function getEscrowMilestonePDA(contractId: string | number, milestoneId: number): [PublicKey, number] {
-  // Convert contractId to BN properly
-  const contractIdBigInt = typeof contractId === 'string' 
-    ? BigInt(contractId)
-    : BigInt(contractId);
-  
-  const contractBuffer = Buffer.alloc(8);
-  contractBuffer.writeBigUInt64LE(contractIdBigInt);
-  const contractIdBN = new anchor.BN(contractBuffer, 'le');
-  
+export function getEscrowMilestonePDA(contractPDA: PublicKey, milestoneId: number): [PublicKey, number] {
   const [pda, bump] = PublicKey.findProgramAddressSync(
     [
       Buffer.from("escrow"),
-      contractIdBN.toArrayLike(Buffer, "le", 8),
+      contractPDA.toBuffer(),
       new anchor.BN(milestoneId).toArrayLike(Buffer, "le", 8),
     ],
     PROGRAM_ID
@@ -92,10 +83,10 @@ export async function initializeEscrowMilestone(
   });
   const program = new Program(idl as anchor.Idl, provider);
 
-  const [escrowPDA] = getEscrowMilestonePDA(contractId, milestoneId);
   const contractPDA = contractPDAOverride
     ? new PublicKey(contractPDAOverride)
     : getContractPDA(contractId, contractCreator)[0];
+  const [escrowPDA] = getEscrowMilestonePDA(contractPDA, milestoneId);
   const [creatorReputationPDA] = getReputationPDA(wallet.publicKey);
   const recipient = new PublicKey(recipientAddress);
   const amountInLamports = BigInt(Math.round(amountInSol * LAMPORTS_PER_SOL));
@@ -153,10 +144,10 @@ export async function markMilestoneComplete(
   });
   const program = new Program(idl as anchor.Idl, provider);
 
-  const [escrowPDA] = getEscrowMilestonePDA(contractId, milestoneId);
   const contractPDA = contractPDAOverride
     ? new PublicKey(contractPDAOverride)
     : getContractPDA(contractId, contractCreator)[0];
+  const [escrowPDA] = getEscrowMilestonePDA(contractPDA, milestoneId);
 
   try {
     const tx = await program.methods
@@ -189,10 +180,10 @@ export async function approveMilestoneRelease(
   });
   const program = new Program(idl as anchor.Idl, provider);
 
-  const [escrowPDA] = getEscrowMilestonePDA(contractId, milestoneId);
   const contractPDA = contractPDAOverride
     ? new PublicKey(contractPDAOverride)
     : getContractPDA(contractId, contractCreator)[0];
+  const [escrowPDA] = getEscrowMilestonePDA(contractPDA, milestoneId);
   const [approverReputationPDA] = getReputationPDA(wallet.publicKey);
 
   try {
@@ -217,7 +208,7 @@ export async function approveMilestoneRelease(
 // Release escrow funds (anyone can call if approvals met)
 export async function releaseEscrowFunds(
   wallet: anchor.Wallet,
-  contractId: string,
+  contractPDAAddress: string,
   milestoneId: number,
   recipientAddress: string
 ): Promise<string> {
@@ -226,7 +217,7 @@ export async function releaseEscrowFunds(
   });
   const program = new Program(idl as anchor.Idl, provider);
 
-  const [escrowPDA] = getEscrowMilestonePDA(contractId, milestoneId);
+  const [escrowPDA] = getEscrowMilestonePDA(new PublicKey(contractPDAAddress), milestoneId);
   const recipient = new PublicKey(recipientAddress);
 
   try {
@@ -249,7 +240,7 @@ export async function releaseEscrowFunds(
 // Cancel escrow milestone (creator only)
 export async function cancelEscrowMilestone(
   wallet: anchor.Wallet,
-  contractId: string,
+  contractPDAAddress: string,
   milestoneId: number
 ): Promise<string> {
   const provider = new anchor.AnchorProvider(connection, wallet, {
@@ -257,7 +248,7 @@ export async function cancelEscrowMilestone(
   });
   const program = new Program(idl as anchor.Idl, provider);
 
-  const [escrowPDA] = getEscrowMilestonePDA(contractId, milestoneId);
+  const [escrowPDA] = getEscrowMilestonePDA(new PublicKey(contractPDAAddress), milestoneId);
 
   try {
     const tx = await program.methods
@@ -278,7 +269,7 @@ export async function cancelEscrowMilestone(
 
 // Fetch escrow milestone data from chain
 export async function fetchEscrowMilestone(
-  contractId: number,
+  contractPDAAddress: string,
   milestoneId: number
 ): Promise<EscrowMilestoneData | null> {
   const provider = new anchor.AnchorProvider(
@@ -288,7 +279,7 @@ export async function fetchEscrowMilestone(
   );
   const program = new Program(idl as anchor.Idl, provider);
 
-  const [escrowPDA] = getEscrowMilestonePDA(contractId, milestoneId);
+  const [escrowPDA] = getEscrowMilestonePDA(new PublicKey(contractPDAAddress), milestoneId);
 
   try {
     const escrowData = await program.account.escrowMilestone.fetch(escrowPDA);
@@ -301,7 +292,7 @@ export async function fetchEscrowMilestone(
 
 // Fetch all escrow milestones for a contract
 export async function fetchContractEscrowMilestones(
-  contractId: string
+  contractPDAAddress: string
 ): Promise<EscrowMilestoneData[]> {
   const provider = new anchor.AnchorProvider(
     connection,
@@ -311,20 +302,11 @@ export async function fetchContractEscrowMilestones(
   const program = new Program(idl as anchor.Idl, provider);
 
   try {
-    // Convert contractId string to BN properly
-    // Split into high and low parts for large numbers
-    const contractIdBigInt = BigInt(contractId);
-    const buffer = Buffer.alloc(8);
-    buffer.writeBigUInt64LE(contractIdBigInt);
-    const contractIdBN = new anchor.BN(buffer, 'le');
-
     const escrows = await program.account.escrowMilestone.all([
       {
         memcmp: {
-          offset: 8 + 8, // discriminator + milestone_id
-          bytes: anchor.utils.bytes.bs58.encode(
-            contractIdBN.toArrayLike(Buffer, "le", 8)
-          ),
+          offset: 8 + 8 + 8, // discriminator + milestone_id + contract_id
+          bytes: contractPDAAddress,
         },
       },
     ]);
@@ -335,4 +317,3 @@ export async function fetchContractEscrowMilestones(
     return [];
   }
 }
-

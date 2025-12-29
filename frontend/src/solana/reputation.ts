@@ -72,6 +72,10 @@ export async function markContractComplete(
   const provider = new anchor.AnchorProvider(connection, wallet, {});
   const program = new Program(idl as anchor.Idl, provider);
 
+  if (!wallet.publicKey.equals(participantPubkey)) {
+    throw new Error("The connected wallet must be the participant completing the contract");
+  }
+
   const [contractPDA] = PublicKey.findProgramAddressSync(
     [
       Buffer.from("contract"),
@@ -86,12 +90,19 @@ export async function markContractComplete(
     program.programId
   );
 
+  const [completionMarker] = PublicKey.findProgramAddressSync(
+    [Buffer.from("completion"), contractPDA.toBuffer(), wallet.publicKey.toBuffer()],
+    program.programId
+  );
+
   const tx = await program.methods
     .markContractComplete()
     .accounts({
       contract: contractPDA,
       participantReputation: participantRepPDA,
-      participant: participantPubkey,
+      completionMarker,
+      participant: wallet.publicKey,
+      systemProgram: anchor.web3.SystemProgram.programId,
     })
     .rpc();
 
@@ -133,4 +144,3 @@ export async function ensureReputationExists(wallet: any) {
     }
   }
 }
-
