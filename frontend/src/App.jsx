@@ -156,8 +156,10 @@ function App() {
   }
 
   const handleWalletRegister = async (name, email, password) => {
+    let registeredUser = null
     try {
       const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password })
+      registeredUser = res.data.user
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
       await axios.patch(`${API_BASE}/auth/wallet`, await walletProof())
@@ -165,7 +167,14 @@ function App() {
       setShowWalletRegister(false)
       await loadDashboard()
     } catch {
-      alert('Wallet registration failed')
+      if (registeredUser) {
+        setUser(registeredUser)
+        setShowWalletRegister(false)
+        await loadDashboard()
+        alert('Account created, but the wallet could not be linked. You can sign in with email and retry after reconnecting the wallet.')
+      } else {
+        alert('Registration failed')
+      }
     }
   }
 
