@@ -5,7 +5,7 @@
   "scripts": {
     "build": "anchor build",
     "deploy": "anchor deploy",
-    "test": "anchor test"
+    "test": "bash scripts/test-local.sh"
   },
   "devDependencies": {
     "@coral-xyz/anchor": "^0.31.0",

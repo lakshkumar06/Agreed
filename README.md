@@ -8,7 +8,7 @@ The project began at the Solana Cypherpunk Hackathon in 2025. Subsequent work fo
 
 ## What the application does
 
-- Create contracts and invite participants by email or wallet address.
+- Create contracts and invite participants by email or wallet address. An invitee must accept a single-use invitation before joining a contract or organization.
 - Propose and review versions, compare changes, comment, and track approvals.
 - Extract clauses, deadlines, and suggested payment milestones with Gemini when an API key is configured.
 - Upload contract content to IPFS when Pinata is configured.
@@ -56,7 +56,7 @@ cd backend && npm test
 cd ../frontend && npm run build
 ```
 
-The backend suite uses a temporary SQLite database and tests password rejection, wallet proof and replay protection, and access checks for private contract data. CI runs the same backend suite and builds the frontend. Anchor tests are separate and require the Anchor/Solana toolchain and local validator.
+The backend suite uses temporary SQLite databases and covers wallet proof and replay protection, private contract data, invitation acceptance, analysis rollback, and concurrent version edits. CI runs the backend tests, frontend build and lint, and Rust unit tests. To run the Anchor integration tests locally, install the Anchor and Solana toolchains, run `yarn install` in `agreed_contracts/`, then run `yarn test`. The test script temporarily uses a local program keypair and restores the configured program ID and checked-in IDL afterward.
 
 ## Screenshots
 
@@ -67,4 +67,4 @@ The backend suite uses a temporary SQLite database and tests password rejection,
 
 ## Current limits
 
-The API and frontend still rely on external services for several flows. Contract creation and version updates are not yet transactional across SQLite and IPFS, and AI responses require human review. The code and CI checks should not be treated as a security audit or a guarantee that escrow is ready for real funds.
+The API and frontend still rely on external services for several flows. SQLite writes are transactional, but IPFS uploads and Solana updates cannot roll back with the database; failed writes can leave orphan pins or a stale on-chain pointer. AI responses require human review. An escrow marked complete has no deadline-based refund or dispute path if approvals stall, and changes to the Anchor program require deployment and account migration before existing on-chain accounts can use them. The code and CI checks are not a security audit or a guarantee that escrow is ready for real funds.
