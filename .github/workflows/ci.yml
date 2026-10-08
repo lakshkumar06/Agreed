@@ -64,7 +64,13 @@ jobs:
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libssl-dev pkg-config
       - name: Install Anchor CLI 0.31.0
-        run: cargo install anchor-cli --version 0.31.0 --locked
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL https://github.com/otter-sec/anchor/releases/download/v0.31.0/anchor-0.31.0-x86_64-unknown-linux-gnu -o "$RUNNER_TEMP/anchor"
+          echo "1aae4c383406a560a979f9f77c61efc5d88d123ac3012383b8c52681fa39f284  $RUNNER_TEMP/anchor" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 755 "$RUNNER_TEMP/anchor" "$RUNNER_TEMP/bin/anchor"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install Agave CLI 2.3.13
         shell: bash
         run: |
