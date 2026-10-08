@@ -39,29 +39,40 @@ function App() {
   const suppressWalletAuth = useRef(null)
   const detailsRequest = useRef(0)
   const sessionRequest = useRef(0)
+  const authIntent = useRef(0)
 
-  const walletProof = useCallback(async () => {
+  const beginExplicitAuth = () => {
+    const intent = ++authIntent.current
+    walletAttempt.current = null
+    suppressWalletAuth.current = publicKey?.toBase58() || null
+    return intent
+  }
+
+  const walletProof = useCallback(async (intent) => {
     if (!signMessage) throw new Error('Wallet does not support message signing')
     const wallet_address = publicKey.toBase58()
     const { data } = await axios.post(`${API_BASE}/auth/wallet/challenge`, { wallet_address })
+    if (intent !== authIntent.current) return null
     const bytes = await signMessage(new TextEncoder().encode(data.message))
+    if (intent !== authIntent.current) return null
     const signature = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
     return { wallet_address, message: data.message, signature }
   }, [publicKey, signMessage])
 
   const loadDashboard = useCallback(async () => {
     const request = ++sessionRequest.current
+    const intent = authIntent.current
     try {
       setDashboardError('')
       const [userRes, contractsRes] = await Promise.all([
         axios.get(`${API_BASE}/auth/me`),
         axios.get(`${API_BASE}/contracts`)
       ])
-      if (request !== sessionRequest.current) return
+      if (request !== sessionRequest.current || intent !== authIntent.current) return
       setUser(userRes.data.user)
       setContracts(contractsRes.data.contracts || [])
     } catch (error) {
-      if (request !== sessionRequest.current) return
+      if (request !== sessionRequest.current || intent !== authIntent.current) return
       console.error('Failed to load dashboard:', error)
       if (error.response?.status === 401) {
         localStorage.removeItem('token')
@@ -108,41 +119,49 @@ function App() {
   }, [loadDashboard, loadInvitationData])
 
   const handleWalletAuth = useCallback(async () => {
+    const intent = authIntent.current
     try {
-      const proof = await walletProof()
-      if (walletAttempt.current !== proof.wallet_address) return
+      const proof = await walletProof(intent)
+      if (!proof || walletAttempt.current !== proof.wallet_address || intent !== authIntent.current) return
       const res = await axios.post(`${API_BASE}/auth/wallet/login`, proof)
-      if (walletAttempt.current !== proof.wallet_address) return
+      if (walletAttempt.current !== proof.wallet_address || intent !== authIntent.current) return
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
       setUser(res.data.user)
       await loadDashboard()
     } catch (error) {
       console.error('Wallet auth failed:', error)
-      if (error.response?.status === 404 && walletAttempt.current === publicKey?.toBase58()) {
+      if (error.response?.status === 404 && intent === authIntent.current && walletAttempt.current === publicKey?.toBase58()) {
         setShowWalletRegister(true)
       }
     }
   }, [walletProof, loadDashboard, publicKey])
 
   const handleLogin = async (email, password) => {
+    const intent = beginExplicitAuth()
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, { email, password })
+      if (intent !== authIntent.current) return
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
+      suppressWalletAuth.current = null
       setUser(res.data.user)
       await loadDashboard()
+      if (intent !== authIntent.current) return
       setShowLogin(false)
     } catch {
-      alert('Login failed')
+      if (intent === authIntent.current) alert('Login failed')
     }
   }
 
   const handleRegister = async (name, email, password) => {
+    const intent = beginExplicitAuth()
     try {
       const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password })
+      if (intent !== authIntent.current) return
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
+      suppressWalletAuth.current = null
       setUser(res.data.user)
       setShowLogin(false)
       setShowEmailRegister(false)
@@ -151,26 +170,36 @@ function App() {
         setShowWalletPrompt(true)
       }
     } catch {
-      alert('Registration failed')
+      if (intent === authIntent.current) alert('Registration failed')
     }
   }
 
   const handleWalletRegister = async (name, email, password) => {
+    const intent = beginExplicitAuth()
     let registeredUser = null
     try {
       const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password })
+      if (intent !== authIntent.current) return
       registeredUser = res.data.user
       localStorage.setItem('token', res.data.token)
       axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
-      await axios.patch(`${API_BASE}/auth/wallet`, await walletProof())
+      const proof = await walletProof(intent)
+      if (!proof || intent !== authIntent.current) return
+      await axios.patch(`${API_BASE}/auth/wallet`, proof, {
+        headers: { Authorization: `Bearer ${res.data.token}` }
+      })
+      if (intent !== authIntent.current) return
+      suppressWalletAuth.current = null
       setUser({ ...res.data.user, wallet_address: publicKey.toBase58() })
       setShowWalletRegister(false)
       await loadDashboard()
     } catch {
+      if (intent !== authIntent.current) return
       if (registeredUser) {
         setUser(registeredUser)
         setShowWalletRegister(false)
         await loadDashboard()
+        if (intent !== authIntent.current) return
         alert('Account created, but the wallet could not be linked. You can sign in with email and retry after reconnecting the wallet.')
       } else {
         alert('Registration failed')
@@ -179,11 +208,16 @@ function App() {
   }
 
   const updateUserWallet = useCallback(async () => {
+    const intent = authIntent.current
+    const token = localStorage.getItem('token')
+    if (!token) return
     try {
-      const proof = await walletProof()
-      if (walletAttempt.current !== proof.wallet_address) return
-      await axios.patch(`${API_BASE}/auth/wallet`, proof)
-      if (walletAttempt.current !== proof.wallet_address) return
+      const proof = await walletProof(intent)
+      if (!proof || walletAttempt.current !== proof.wallet_address || intent !== authIntent.current || token !== localStorage.getItem('token')) return
+      await axios.patch(`${API_BASE}/auth/wallet`, proof, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (walletAttempt.current !== proof.wallet_address || intent !== authIntent.current || token !== localStorage.getItem('token')) return
       await loadDashboard()
     } catch (error) {
       console.error('Failed to update wallet:', error)
@@ -344,6 +378,7 @@ function App() {
   }
 
   const handleLogout = () => {
+    authIntent.current++
     sessionRequest.current++
     localStorage.removeItem('token')
     delete axios.defaults.headers.common['Authorization']
