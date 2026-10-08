@@ -23,7 +23,9 @@ The SQLite database holds application state. IPFS and Solana are external integr
 | `frontend/` | React and Vite application |
 | `backend/` | Express API, SQLite schema and migrations |
 | `agreed_contracts/` | Anchor program and program tests |
-| `.github/workflows/ci.yml` | Backend tests and frontend build |
+| `.github/workflows/ci.yml` | Backend tests, frontend build and lint, and Rust unit tests |
+
+Dependency updates for the backend, frontend, Anchor program, and GitHub Actions are proposed weekly by Dependabot. Each update still needs its relevant CI checks and review before merging; the repository currently has unresolved dependency advisories.
 
 ## Run locally
 
