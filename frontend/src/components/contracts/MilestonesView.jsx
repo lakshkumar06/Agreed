@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import axios from 'axios'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
@@ -21,28 +21,39 @@ export function MilestonesView({ contractId, contract, isCreator }) {
   const [processingMilestone, setProcessingMilestone] = useState(null)
   const [showSetupForm, setShowSetupForm] = useState(null)
   const [initializingContract, setInitializingContract] = useState(false)
+  const milestonesRequest = useRef(0)
+  const contractPda = contract?.solana_contract_pda
 
-  useEffect(() => {
-    loadMilestones()
-  }, [contractId])
-
-  const loadMilestones = async () => {
+  const loadMilestones = useCallback(async (signal) => {
+    const request = ++milestonesRequest.current
+    const isCurrent = () => request === milestonesRequest.current && !signal?.aborted
+    setLoading(true)
     try {
       // Load AI suggestions from database
-      const suggestionsRes = await axios.get(`${API_BASE}/contracts/${contractId}/milestone-suggestions`)
+      const suggestionsRes = await axios.get(`${API_BASE}/contracts/${contractId}/milestone-suggestions`, { signal })
+      if (!isCurrent()) return
       setSuggestions(suggestionsRes.data.milestones || [])
 
       // Load on-chain escrow milestones if contract has Solana contract ID
-      if (contract?.solana_contract_pda) {
-        const chainMilestones = await fetchContractEscrowMilestones(contract.solana_contract_pda)
+      if (contractPda) {
+        const chainMilestones = await fetchContractEscrowMilestones(contractPda)
+        if (!isCurrent()) return
         setOnChainMilestones(chainMilestones)
+      } else {
+        setOnChainMilestones([])
       }
     } catch (error) {
-      console.error('Error loading milestones:', error)
+      if (isCurrent()) console.error('Error loading milestones:', error)
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }
+  }, [contractId, contractPda])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    loadMilestones(controller.signal)
+    return () => controller.abort()
+  }, [loadMilestones])
 
   const handleInitializeContract = async () => {
     if (!wallet.connected || !wallet.publicKey) {

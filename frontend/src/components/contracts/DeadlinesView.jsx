@@ -8,19 +8,21 @@ export function DeadlinesView({ contractId }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadDeadlines()
+    const controller = new AbortController()
+    setLoading(true)
+    setDeadlines([])
+    axios.get(`${API_BASE}/contracts/${contractId}/deadlines`, { signal: controller.signal })
+      .then(res => {
+        if (!controller.signal.aborted) setDeadlines(res.data.deadlines || [])
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) console.error('Error loading deadlines:', error)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [contractId])
-
-  const loadDeadlines = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/contracts/${contractId}/deadlines`)
-      setDeadlines(res.data.deadlines)
-    } catch (error) {
-      console.error('Error loading deadlines:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -61,4 +63,3 @@ export function DeadlinesView({ contractId }) {
     </div>
   )
 }
-

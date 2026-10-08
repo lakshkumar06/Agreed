@@ -8,22 +8,25 @@ export function ApprovalRequestsView({ contractId, versions, onSelectVersion }) 
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadApprovals();
-  }, [versions]);
-
-  const loadApprovals = async () => {
-    const approvalsMap = {};
-    for (const version of versions) {
+    const controller = new AbortController();
+    setLoading(true);
+    setApprovals({});
+    Promise.all(versions.map(async version => {
+      const id = version.id;
       try {
-        const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${version.id}/approvals`);
-        approvalsMap[version.id] = res.data;
+        const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${id}/approvals`, { signal: controller.signal });
+        return [id, res.data];
       } catch (error) {
-        console.error('Error loading approvals:', error);
+        if (!controller.signal.aborted) console.error('Error loading approvals:', error);
+        return null;
       }
-    }
-    setApprovals(approvalsMap);
-    setLoading(false);
-  };
+    })).then(results => {
+      if (controller.signal.aborted) return;
+      setApprovals(Object.fromEntries(results.filter(Boolean)));
+      setLoading(false);
+    });
+    return () => controller.abort();
+  }, [contractId, versions]);
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">

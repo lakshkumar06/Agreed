@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
@@ -70,19 +70,31 @@ export function CommentThread({ contractId, versionId }) {
   const [newComment, setNewComment] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
+  const activeVersion = useRef(null);
+  const latestRequest = useRef(0);
 
-  useEffect(() => {
-    loadComments();
-  }, [versionId]);
-
-  const loadComments = async () => {
+  const loadComments = useCallback(async (signal) => {
+    const key = `${contractId}:${versionId}`;
+    const request = ++latestRequest.current;
     try {
-      const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${versionId}/comments`);
+      const res = await axios.get(`${API_BASE}/contracts/${contractId}/versions/${versionId}/comments`, { signal });
+      if (signal?.aborted || activeVersion.current !== key || request !== latestRequest.current) return;
       setComments(res.data.comments);
     } catch (error) {
-      console.error('Error loading comments:', error);
+      if (!signal?.aborted && activeVersion.current === key) console.error('Error loading comments:', error);
     }
-  };
+  }, [contractId, versionId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    activeVersion.current = `${contractId}:${versionId}`;
+    setComments([]);
+    loadComments(controller.signal);
+    return () => {
+      controller.abort();
+      activeVersion.current = null;
+    };
+  }, [contractId, versionId, loadComments]);
 
   const addComment = async (parentId = null) => {
     if (!newComment.trim()) return;
@@ -162,4 +174,3 @@ export function CommentThread({ contractId, versionId }) {
     </div>
   );
 }
-

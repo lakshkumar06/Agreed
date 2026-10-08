@@ -8,19 +8,21 @@ export function ClausesView({ contractId }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadClauses()
+    const controller = new AbortController()
+    setLoading(true)
+    setClauses([])
+    axios.get(`${API_BASE}/contracts/${contractId}/clauses`, { signal: controller.signal })
+      .then(res => {
+        if (!controller.signal.aborted) setClauses(res.data.clauses || [])
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) console.error('Error loading clauses:', error)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+    return () => controller.abort()
   }, [contractId])
-
-  const loadClauses = async () => {
-    try {
-      const res = await axios.get(`${API_BASE}/contracts/${contractId}/clauses`)
-      setClauses(res.data.clauses)
-    } catch (error) {
-      console.error('Error loading clauses:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   if (loading) {
     return <div className="text-center py-8">Loading...</div>
@@ -55,4 +57,3 @@ export function ClausesView({ contractId }) {
     </div>
   )
 }
-

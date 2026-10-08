@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CommitView } from '../CommitView'
 import { ContractView } from './ContractView'
 import { MembersView } from './MembersView'
@@ -15,6 +15,7 @@ export function ContractDetailView({ contract, members, invitations, currentUser
   const [contractViewMode, setContractViewMode] = useState('raw') // 'raw', 'clauses', 'chat'
   
   const isCreator = currentUserId === contract.created_by
+  const pendingVersions = useMemo(() => versions.filter(v => v.approval_status !== 'merged'), [versions])
   
   const handleVersionSelect = (version) => {
     onSelectVersion(version)
@@ -99,7 +100,7 @@ export function ContractDetailView({ contract, members, invitations, currentUser
                 }`}
               >
                 Approval Requests
-                <span className="ml-2 text-xs text-gray-500">({versions.filter(v => v.approval_status !== 'merged').length})</span>
+                <span className="ml-2 text-xs text-gray-500">({pendingVersions.length})</span>
               </button>
               <button
                 onClick={() => { setSidebarMode('versionHistory'); setContentMode('editor') }}
@@ -179,7 +180,7 @@ export function ContractDetailView({ contract, members, invitations, currentUser
             ) : sidebarMode === 'approvalRequests' ? (
               <ApprovalRequestsView
                 contractId={contract.id}
-                versions={versions.filter(v => v.approval_status !== 'merged')}
+                versions={pendingVersions}
                 onSelectVersion={handleVersionSelect}
                 currentUserId={currentUserId}
                 isCreator={isCreator}
@@ -247,11 +248,11 @@ export function ContractDetailView({ contract, members, invitations, currentUser
               </div>
             </div>
 
-            {versions.filter(v => v.approval_status !== 'merged').length > 0 && (
+            {pendingVersions.length > 0 && (
               <div className="bg-white border border-gray-200 rounded-lg p-4">
                 <h3 className="text-sm font-semibold mb-3">Recent Activity</h3>
                 <div className="space-y-2 text-sm">
-                  {versions.filter(v => v.approval_status !== 'merged').slice(0, 3).map(version => (
+                  {pendingVersions.slice(0, 3).map(version => (
                     <div key={version.id} className="flex items-center space-x-2 text-gray-600">
                       <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton, WalletDisconnectButton } from '@solana/wallet-adapter-react-ui'
 import axios from 'axios'
@@ -36,70 +36,20 @@ function App() {
   const [showCompareModal, setShowCompareModal] = useState(false)
   const [compareVersions, setCompareVersions] = useState([])
   const walletAttempt = useRef(null)
+  const suppressWalletAuth = useRef(null)
   const detailsRequest = useRef(0)
   const sessionRequest = useRef(0)
 
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (token) axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
-    else delete axios.defaults.headers.common['Authorization']
-
-    // Restore the session even when the user opens an invitation link.
-    const path = window.location.pathname
-    if (path.startsWith('/invite/')) {
-      const invitationToken = path.slice('/invite/'.length)
-      Promise.all([loadInvitationData(invitationToken), token ? loadDashboard() : Promise.resolve()])
-        .finally(() => setLoading(false))
-    } else if (token) {
-      loadDashboard()
-    } else {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (loading) return
-    if (!connected || !publicKey) {
-      walletAttempt.current = null
-      return
-    }
-    const address = publicKey.toBase58()
-    if (walletAttempt.current === address) return
-    if (connected && publicKey && user && !user.wallet_address) {
-      walletAttempt.current = address
-      // User is logged in but doesn't have wallet connected, update it
-      updateUserWallet()
-      setShowWalletPrompt(false)
-    } else if (connected && publicKey && !user) {
-      walletAttempt.current = address
-      // User not logged in, try wallet auth
-      handleWalletAuth()
-    }
-  }, [connected, publicKey, user, loading])
-
-  const walletProof = async () => {
+  const walletProof = useCallback(async () => {
     if (!signMessage) throw new Error('Wallet does not support message signing')
     const wallet_address = publicKey.toBase58()
     const { data } = await axios.post(`${API_BASE}/auth/wallet/challenge`, { wallet_address })
     const bytes = await signMessage(new TextEncoder().encode(data.message))
     const signature = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''))
     return { wallet_address, message: data.message, signature }
-  }
+  }, [publicKey, signMessage])
 
-  const handleWalletAuth = async () => {
-    try {
-      const res = await axios.post(`${API_BASE}/auth/wallet/login`, await walletProof())
-      localStorage.setItem('token', res.data.token)
-      axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
-      setUser(res.data.user)
-      await loadDashboard()
-    } catch (error) {
-      console.error('Wallet auth failed:', error)
-      if (error.response?.status === 404) setShowWalletRegister(true)
-    }
-  }
-
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async () => {
     const request = ++sessionRequest.current
     try {
       setDashboardError('')
@@ -122,8 +72,58 @@ function App() {
         setDashboardError('Could not load your dashboard. Check your connection and retry.')
       }
     }
-    setLoading(false)
-  }
+  }, [])
+
+  const loadInvitationData = useCallback(async (token, signal) => {
+    try {
+      const res = await axios.get(`${API_BASE}/contracts/invite/${token}`, { signal })
+      if (signal.aborted) return
+      setInvitationData(res.data.invitation)
+      setShowInvitationPage(true)
+    } catch (error) {
+      if (signal.aborted) return
+      console.error('Failed to load invitation:', error)
+      alert('Invalid or expired invitation link')
+    }
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const token = localStorage.getItem('token')
+    if (token) axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+    else delete axios.defaults.headers.common['Authorization']
+
+    // Restore the session even when the user opens an invitation link.
+    const path = window.location.pathname
+    if (path.startsWith('/invite/')) {
+      const invitationToken = path.slice('/invite/'.length)
+      Promise.all([loadInvitationData(invitationToken, controller.signal), token ? loadDashboard() : Promise.resolve()])
+        .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    } else if (token) {
+      loadDashboard().finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    } else {
+      setLoading(false)
+    }
+    return () => controller.abort()
+  }, [loadDashboard, loadInvitationData])
+
+  const handleWalletAuth = useCallback(async () => {
+    try {
+      const proof = await walletProof()
+      if (walletAttempt.current !== proof.wallet_address) return
+      const res = await axios.post(`${API_BASE}/auth/wallet/login`, proof)
+      if (walletAttempt.current !== proof.wallet_address) return
+      localStorage.setItem('token', res.data.token)
+      axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`
+      setUser(res.data.user)
+      await loadDashboard()
+    } catch (error) {
+      console.error('Wallet auth failed:', error)
+      if (error.response?.status === 404 && walletAttempt.current === publicKey?.toBase58()) {
+        setShowWalletRegister(true)
+      }
+    }
+  }, [walletProof, loadDashboard, publicKey])
 
   const handleLogin = async (email, password) => {
     try {
@@ -178,14 +178,37 @@ function App() {
     }
   }
 
-  const updateUserWallet = async () => {
+  const updateUserWallet = useCallback(async () => {
     try {
-      await axios.patch(`${API_BASE}/auth/wallet`, await walletProof())
+      const proof = await walletProof()
+      if (walletAttempt.current !== proof.wallet_address) return
+      await axios.patch(`${API_BASE}/auth/wallet`, proof)
+      if (walletAttempt.current !== proof.wallet_address) return
       await loadDashboard()
     } catch (error) {
       console.error('Failed to update wallet:', error)
     }
-  }
+  }, [walletProof, loadDashboard])
+
+  useEffect(() => {
+    if (loading) return
+    if (!connected || !publicKey) {
+      walletAttempt.current = null
+      suppressWalletAuth.current = null
+      return
+    }
+    const address = publicKey.toBase58()
+    if (suppressWalletAuth.current === address) return
+    if (walletAttempt.current === address) return
+    if (user && !user.wallet_address) {
+      walletAttempt.current = address
+      updateUserWallet()
+      setShowWalletPrompt(false)
+    } else if (!user) {
+      walletAttempt.current = address
+      handleWalletAuth()
+    }
+  }, [connected, publicKey, user, loading, updateUserWallet, handleWalletAuth])
 
   const createContract = async (title, description, fileContent) => {
     let created = false
@@ -299,19 +322,6 @@ function App() {
     setShowCompareModal(true)
   }
 
-  const loadInvitationData = async (token) => {
-    try {
-      const res = await axios.get(`${API_BASE}/contracts/invite/${token}`)
-      setInvitationData(res.data.invitation)
-      setShowInvitationPage(true)
-      setLoading(false)
-    } catch (error) {
-      console.error('Failed to load invitation:', error)
-      alert('Invalid or expired invitation link')
-      setLoading(false)
-    }
-  }
-
   const acceptInvitation = async () => {
     if (!user) {
       alert('Please login first to accept the invitation')
@@ -338,7 +348,8 @@ function App() {
     localStorage.removeItem('token')
     delete axios.defaults.headers.common['Authorization']
     detailsRequest.current++
-    walletAttempt.current = publicKey?.toBase58() || null
+    suppressWalletAuth.current = publicKey?.toBase58() || null
+    walletAttempt.current = null
     setUser(null)
     setContracts([])
     setSelectedContract(null)
