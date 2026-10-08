@@ -3,6 +3,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -41,3 +44,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --locked -p agreed_contracts
         working-directory: agreed_contracts
+
+  program-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.10.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libssl-dev pkg-config
+      - name: Install Anchor CLI 0.31.0
+        run: cargo install anchor-cli --version 0.31.0 --locked
+      - name: Install Agave CLI 2.3.13
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL https://release.anza.xyz/v2.3.13/install -o "$RUNNER_TEMP/agave-install.sh"
+          echo "44f37013c80bf1122067b250da38339a0b061dafde1f4162f037b4ce0008afa5  $RUNNER_TEMP/agave-install.sh" | sha256sum -c -
+          sh "$RUNNER_TEMP/agave-install.sh"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install locked TypeScript dependencies
+        working-directory: agreed_contracts
+        run: |
+          npm install --global yarn@1.22.22
+          yarn install --frozen-lockfile
+      - name: Create local test wallet
+        run: |
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --outfile "$HOME/.config/solana/id.json"
+      - name: Run Anchor local-validator tests
+        working-directory: agreed_contracts
+        run: yarn test
