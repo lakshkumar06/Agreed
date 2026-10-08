@@ -47,6 +47,8 @@ npm run dev
 
 The frontend runs on `http://localhost:5173` and the API on `http://localhost:3001` by default. Set `FRONTEND_URL` in the backend to the permitted frontend origin. Set `VITE_API_BASE_URL` for a frontend deployed separately from the API. `DB_PATH` can point to a separate SQLite file; otherwise the API uses `backend/database/clausebase.db`. The checked-in IDL at `agreed_contracts/idl/agreed_contracts.json` lets clean checkouts build; regenerate it with `anchor idl build --out idl/agreed_contracts.json` from `agreed_contracts/` after changing the program.
 
+For deployment checks, `GET /api/health` reports that the process is alive. `GET /api/ready` returns 200 only after database initialization and while a database query succeeds; it returns 503 during shutdown or if the database is unavailable. On SIGTERM or SIGINT, the API stops accepting connections, waits for active requests, then closes SQLite. `SHUTDOWN_TIMEOUT_MS` sets the grace period (default 10000 ms); after that period the process exits with an error.
+
 Optional services need their own credentials: `GEMINI_API_KEY` for AI, `PINATA_JWT` (or Pinata API key and secret) for IPFS, and email credentials for sending invitations. Contract creation currently depends on IPFS being available, so configure Pinata before testing that flow.
 
 ## Verify changes

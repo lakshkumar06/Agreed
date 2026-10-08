@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { initDatabase, db } from './database/init.js';
+import { initDatabase, db, closeDatabase } from './database/init.js';
+import { createReadinessHandler } from './readiness.js';
 import { requireJwtSecret } from './config.js';
 import authRoutes from './routes/auth.js';
 import orgRoutes from './routes/organizations.js';
@@ -35,7 +36,42 @@ app.use('/api', ipfsRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'API is running' });
 });
+let shuttingDown = false;
+app.get('/api/ready', createReadinessHandler(db, () => shuttingDown));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+const shutdownTimeout = Number(process.env.SHUTDOWN_TIMEOUT_MS);
+const gracePeriodMs = Number.isFinite(shutdownTimeout) && shutdownTimeout > 0
+  ? shutdownTimeout : 10000;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}; draining API requests`);
+
+  const deadline = setTimeout(() => {
+    console.error('Shutdown grace period expired; closing active connections');
+    server.closeAllConnections?.();
+    process.exit(1);
+  }, gracePeriodMs);
+
+  server.close(async error => {
+    try {
+      await closeDatabase();
+    } catch (closeError) {
+      console.error('Failed to close database:', closeError);
+      error ||= closeError;
+    } finally {
+      clearTimeout(deadline);
+    }
+    if (error) console.error('Failed to shut down API:', error);
+    process.exitCode = error ? 1 : 0;
+  });
+  server.closeIdleConnections?.();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
